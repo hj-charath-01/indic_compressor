@@ -1,0 +1,16 @@
+[package]
+name = "indic_ans_compressor"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+unicode-segmentation = "1.11"
+unicode-general-category = "0.3"
+constriction = "0.4"
+wasm-bindgen = "0.2"
+anyhow = "1.0"
+# For the CLI example:
+clap = { version = "4.2", features = ["derive"] }
