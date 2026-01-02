@@ -3,51 +3,184 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Indic Compressor — Demo</title>
+  <title>Indic Text Compressor — Demo</title>
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
   <main class="container">
-    <h1>Indic Compressor — Demo</h1>
+    <header class="header">
+      <h1>Indic Text Compressor</h1>
+      <p class="subtitle">Efficient compression for Indic scripts using PPM + rANS</p>
+    </header>
 
+    <!-- Main Input Section -->
     <section class="panel">
-      <label for="inputText" class="label">Input text (Hindi/Tamil/any Indic text)</label>
-      <textarea id="inputText" class="textbox">यह एक परीक्षण वाक्य है। यह वाक्य देवनागरी लिपि में है।</textarea>
-
-      <div class="row">
-        <div class="col">
-          <label for="chunkSize" class="label small">Chunk size (tokens)</label>
-          <input id="chunkSize" type="number" value="40" min="4" class="number">
+      <h2> Input Text</h2>
+      <label for="inputText" class="label">Enter text in any Indic script (Hindi, Tamil, Telugu, etc.)</label>
+      <textarea 
+        id="inputText" 
+        class="textbox" 
+        placeholder="Type or paste Indic text here..."
+        spellcheck="false"
+      >यह एक परीक्षण वाक्य है। यह वाक्य देवनागरी लिपि में है।</textarea>
+      
+      <div class="stats-row">
+        <div class="stat">
+          <span class="stat-label">Characters:</span>
+          <span id="charCount" class="stat-value">0</span>
         </div>
+        <div class="stat">
+          <span class="stat-label">Bytes (UTF-8):</span>
+          <span id="byteCount" class="stat-value">0</span>
+        </div>
+      </div>
+    </section>
 
-        <div class="col buttons">
-          <button id="btnEncode" class="btn primary">Encode → Create Stream</button>
-          <button id="btnDownload" disabled class="btn">Download .bin</button>
+    <!-- Compression Settings -->
+    <section class="panel">
+      <h2> Compression Settings</h2>
+      
+      <div class="setting-group">
+        <label for="chunkSize" class="label">
+          Chunk Size (tokens per chunk)
+          <span class="help-icon" title="Number of grapheme clusters processed together. Smaller chunks = faster progressive decoding, larger chunks = better compression.">ℹ️</span>
+        </label>
+        <div class="input-with-display">
+          <input id="chunkSize" type="range" value="40" min="10" max="200" step="10" class="slider">
+          <span id="chunkSizeDisplay" class="value-display">40</span>
         </div>
       </div>
 
-      <div class="row">
-        <div class="col">
-          <label for="chunkToDecode" class="label small">Partial decode chunk index</label>
-          <input id="chunkToDecode" type="number" value="0" min="0" class="number">
+      <div class="button-group">
+        <button id="btnEncode" class="btn btn-primary">
+           Compress Text
+        </button>
+        <button id="btnClear" class="btn btn-secondary">
+           Clear
+        </button>
+      </div>
+    </section>
+
+    <!-- Compression Results -->
+    <section class="panel" id="resultsPanel" style="display: none;">
+      <h2> Compression Results</h2>
+      
+      <div class="results-grid">
+        <div class="result-card">
+          <div class="result-label">Original Size</div>
+          <div id="originalSize" class="result-value">— bytes</div>
         </div>
-        <div class="col buttons">
-          <button id="btnDecodePrefix" disabled class="btn">Decode prefix</button>
-          <button id="btnCountChunks" disabled class="btn">Count chunks</button>
+        <div class="result-card">
+          <div class="result-label">Compressed Size</div>
+          <div id="compressedSize" class="result-value">— bytes</div>
+        </div>
+        <div class="result-card">
+          <div class="result-label">Compression Ratio</div>
+          <div id="compressionRatio" class="result-value">—</div>
+        </div>
+        <div class="result-card">
+          <div class="result-label">Number of Chunks</div>
+          <div id="chunkCount" class="result-value">—</div>
         </div>
       </div>
 
-      <div class="info" id="streamInfo">No stream yet</div>
+      <div class="button-group">
+        <button id="btnDownload" class="btn btn-primary">
+           Download .bin
+        </button>
+        <button id="btnDecodeAll" class="btn btn-secondary">
+           Decompress All
+        </button>
+      </div>
     </section>
 
-    <section class="panel">
-      <h2>Decoded output (partial)</h2>
-      <pre id="decodedOutput" class="output">—</pre>
+    <!-- Progressive Decoding -->
+    <section class="panel" id="decodePanel" style="display: none;">
+      <h2> Progressive Decoding</h2>
+      <p class="info-text">Decode only part of the compressed stream (useful for previews or streaming)</p>
+      
+      <div class="setting-group">
+        <label for="chunkToDecode" class="label">
+          Decode up to chunk #
+          <span class="help-icon" title="Decode only the first N chunks. Useful for getting a preview without decompressing everything.">ℹ️</span>
+        </label>
+        <div class="input-with-display">
+          <input id="chunkToDecode" type="range" value="0" min="0" max="0" class="slider">
+          <span id="chunkToDecodeDisplay" class="value-display">0</span>
+        </div>
+      </div>
+
+      <div class="button-group">
+        <button id="btnDecodePrefix" class="btn btn-primary">
+           Decode Partial
+        </button>
+      </div>
     </section>
 
-    <section class="panel smallprint">
-      <p><strong>Notes:</strong> This demo expects `pkg/indic_ans_compressor.js` and `pkg/indic_ans_compressor_bg.wasm` next to this page (generated by wasm-bindgen). Serve the `web/` directory via HTTP (do not open via file://).</p>
+    <!-- Decoded Output -->
+    <section class="panel" id="outputPanel" style="display: none;">
+      <h2> Decoded Output</h2>
+      <div class="output-header">
+        <span id="outputStatus" class="status-badge">—</span>
+        <button id="btnCopyOutput" class="btn btn-small">Copy</button>
+      </div>
+      <pre id="decodedOutput" class="output">Decoded text will appear here...</pre>
     </section>
+
+    <!-- Help Section -->
+    <section class="panel help-section">
+      <h2> How to Use</h2>
+      <div class="help-content">
+        <div class="help-item">
+          <strong>1. Enter Text:</strong> Type or paste Indic script text in the input box. The compressor works with any Indic script (Devanagari, Tamil, Telugu, Gujarati, etc.).
+        </div>
+        <div class="help-item">
+          <strong>2. Adjust Chunk Size:</strong> Control how the text is split. Smaller chunks (10-50) enable faster progressive decoding, larger chunks (100-200) give better compression.
+        </div>
+        <div class="help-item">
+          <strong>3. Compress:</strong> Click "Compress Text" to encode. The algorithm uses PPM (Prediction by Partial Matching) with rANS (range Asymmetric Numeral Systems).
+        </div>
+        <div class="help-item">
+          <strong>4. Download:</strong> Save the compressed .bin file. This binary stream can be decoded later.
+        </div>
+        <div class="help-item">
+          <strong>5. Progressive Decoding:</strong> Decode only part of the stream using the slider. Useful for previews or when you only need the beginning.
+        </div>
+        <div class="help-item">
+          <strong>6. Full Decompression:</strong> Click "Decompress All" to verify the compressed text matches the original.
+        </div>
+      </div>
+    </section>
+
+    <!-- Technical Notes -->
+    <section class="panel technical-notes">
+      <details>
+        <summary><strong>Technical Details</strong></summary>
+        <div class="tech-content">
+          <p><strong>Algorithm:</strong> This compressor uses a combination of:</p>
+          <ul>
+            <li><strong>PPM (Prediction by Partial Matching):</strong> Order-2 context modeling that predicts each token based on the previous 2 tokens and feature masks</li>
+            <li><strong>rANS (range Asymmetric Numeral Systems):</strong> Entropy coding that achieves near-optimal compression based on predicted probabilities</li>
+            <li><strong>Feature Extraction:</strong> Indic-specific features (halant/virama, combining marks, vowels) help the model make better predictions</li>
+          </ul>
+          
+          <p><strong>File Format:</strong> Each chunk contains:</p>
+          <ul>
+            <li>Magic bytes "IC" (Indic Compressor)</li>
+            <li>Token count and dictionary deltas</li>
+            <li>Feature masks for each token</li>
+            <li>rANS-compressed payload</li>
+          </ul>
+          
+          <p><strong>Requirements:</strong> This demo requires WebAssembly support (available in all modern browsers).</p>
+        </div>
+      </details>
+    </section>
+
+    <!-- Status Messages -->
+    <div id="statusToast" class="toast hidden">
+      <span id="toastMessage"></span>
+    </div>
   </main>
 
   <script type="module" src="./index.js"></script>

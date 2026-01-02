@@ -1,0 +1,15 @@
+{
+  "name": "indic_ans_compressor",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "indic_ans_compressor_bg.wasm",
+    "indic_ans_compressor.js",
+    "indic_ans_compressor.d.ts"
+  ],
+  "main": "indic_ans_compressor.js",
+  "types": "indic_ans_compressor.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
