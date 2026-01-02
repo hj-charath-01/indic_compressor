@@ -21,7 +21,6 @@ impl ContextKey {
 }
 
 pub struct PPMModel {
-    order: usize,
     // For each context we hold a vector of counts indexed by symbol id (size = max_symbols)
     table: HashMap<ContextKey, Vec<u32>>,
     global: Vec<u32>,
@@ -29,9 +28,8 @@ pub struct PPMModel {
 }
 
 impl PPMModel {
-    pub fn new(order: usize, max_symbols: usize) -> Self {
+    pub fn new(_order: usize, max_symbols: usize) -> Self {
         PPMModel {
-            order,
             table: HashMap::new(),
             global: vec![1u32; max_symbols], // Laplace smoothing - start with 1
             max_symbols,
@@ -43,7 +41,7 @@ impl PPMModel {
         // try longest context then fallback to global
         let ctx = ContextKey::new(prev, feature_mask);
         if let Some(v) = self.table.get(&ctx) {
-            let mut out = v.clone();
+            let out = v.clone();
             let total: u32 = out.iter().sum();
             return (out, total);
         }

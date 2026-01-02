@@ -14,6 +14,9 @@ use std::collections::HashMap;
 const PRECISION: usize = 24;
 type Model = ContiguousCategoricalEntropyModel<u32, Vec<u32>, PRECISION>;
 
+/// Enable debug output (set to false for production)
+const DEBUG: bool = true;
+
 /// Chunk structure:
 /// - token_count: number of tokens in the chunk
 /// - deltas: newly-added token entries (id, token text)
@@ -150,64 +153,76 @@ pub fn encode_chunk(dict: &mut MultiTierDict, chunk_tokens: Vec<String>) -> Resu
     }
     let vocab_size = rank_to_id.len(); // usize
 
-    // Build PPM (over ranks) + rANS
-    let mut ppm = PPMModel::new(2, vocab_size);
-    let mut coder = DefaultAnsCoder::new();
-
-    // We'll record the exact rank sequence that encoder passes to rANS (in decode order)
-    let mut encoded_ranks: Vec<usize> = Vec::with_capacity(token_ids.len());
-
-    // Prepare a list of (rank, model) in the reverse order the coder expects.
-    let mut rank_model_pairs: Vec<(usize, Model)> = Vec::with_capacity(token_ids.len());
-
-    // Reconstruct the same PPM progression to create models; do it in reverse as before:
-    {
-        let mut ppm_tmp = PPMModel::new(2, vocab_size);
-        let mut prev_tmp: Vec<u32> = Vec::new();
-
-        for i_rev in (0..token_ids.len()).rev() {
-            let id = token_ids[i_rev];
-            let rank = *id_to_rank.get(&id)
-                .ok_or_else(|| anyhow!("id {} missing from rank mapping (encoder)", id))?;
-            let rank_u32 = rank as u32;
-            let features = features_vec[i_rev];
-
-            let (freqs, _total) = ppm_tmp.get_freqs(&prev_tmp, features);
-            let n = freqs.len();
-            if n == 0 {
-                return Err(anyhow!("empty frequency vector in encoder"));
+    // Debug print rank mapping
+    if DEBUG {
+        println!("ENCODER: vocab_size={}, dict.next_id()={}", vocab_size, dict.next_id());
+        println!("ENCODER: rank_to_id={:?}", rank_to_id);
+        println!("ENCODER: token_ids={:?}", token_ids);
+        // Print first few tokens in dictionary
+        println!("ENCODER: First 10 dict entries:");
+        for i in 0..10.min(dict.next_id() as usize) {
+            if let Some(tok) = dict.lookup(i as u32) {
+                println!("  ID {}: '{}'", i, tok);
             }
-
-            let total_f: f64 = freqs.iter().map(|&v| v as f64).sum();
-            let probs: Vec<f64> = if total_f > 0.0 {
-                freqs.iter().map(|&v| (v as f64) / total_f).collect()
-            } else {
-                vec![1.0_f64 / (n as f64); n]
-            };
-
-            let model: Model = Model::from_floating_point_probabilities_perfect(&probs)
-                .or_else(|_| {
-                    let uni = vec![1.0_f64 / (probs.len() as f64); probs.len()];
-                    Model::from_floating_point_probabilities_perfect(&uni)
-                })
-                .map_err(|_| anyhow!("failed to build entropy model (encoder)"))?;
-
-            // push the (symbol, model) pair in the order we will encode (reverse order)
-            rank_model_pairs.push((rank, model));
-            // record rank for debugging (this vector is in the same reverse order)
-            encoded_ranks.push(rank);
-
-            // update tmp ppm as before
-            ppm_tmp.update(&prev_tmp, features, rank_u32);
-            prev_tmp.push(rank_u32);
-            if prev_tmp.len() > 2 { prev_tmp.remove(0); }
         }
     }
 
-    // Now encode all pairs in the exact order recorded.
-    {
-        coder.encode_symbols(rank_model_pairs.into_iter())
-            .map_err(|e| anyhow!("rANS encode_symbols failed: {:?}", e))?;
+    // Build rANS coder
+    let mut coder = DefaultAnsCoder::new();
+
+    // We'll record the exact rank sequence that encoder passes to rANS
+    let mut encoded_ranks: Vec<usize> = Vec::with_capacity(token_ids.len());
+
+    // NEW APPROACH: Encode in FORWARD order but push to rANS in REVERSE order
+    // This way both encoder and decoder build PPM from past context
+    
+    // First pass: build models and collect (rank, model) pairs in forward order
+    let mut rank_model_pairs: Vec<(usize, Model)> = Vec::with_capacity(token_ids.len());
+    let mut ppm_tmp = PPMModel::new(2, vocab_size);
+    let mut prev_tmp: Vec<u32> = Vec::new();
+
+    for i in 0..token_ids.len() {
+        let id = token_ids[i];
+        let rank = *id_to_rank.get(&id)
+            .ok_or_else(|| anyhow!("id {} missing from rank mapping (encoder)", id))?;
+        let rank_u32 = rank as u32;
+        let features = features_vec[i];
+
+        let (freqs, _total) = ppm_tmp.get_freqs(&prev_tmp, features);
+        let n = freqs.len();
+        if n == 0 {
+            return Err(anyhow!("empty frequency vector in encoder"));
+        }
+
+        let total_f: f64 = freqs.iter().map(|&v| v as f64).sum();
+        let probs: Vec<f64> = if total_f > 0.0 {
+            freqs.iter().map(|&v| (v as f64) / total_f).collect()
+        } else {
+            vec![1.0_f64 / (n as f64); n]
+        };
+
+        let model: Model = Model::from_floating_point_probabilities_perfect(&probs)
+            .or_else(|_| {
+                let uni = vec![1.0_f64 / (probs.len() as f64); probs.len()];
+                Model::from_floating_point_probabilities_perfect(&uni)
+            })
+            .map_err(|_| anyhow!("failed to build entropy model (encoder)"))?;
+
+        // Store (rank, model) pair
+        rank_model_pairs.push((rank, model));
+        encoded_ranks.push(rank);
+
+        // Update PPM with the rank we just processed
+        ppm_tmp.update(&prev_tmp, features, rank_u32);
+        prev_tmp.push(rank_u32);
+        if prev_tmp.len() > 2 { prev_tmp.remove(0); }
+    }
+
+    // Second pass: encode in REVERSE order for rANS
+    // rANS is LIFO, so we push in reverse to pop in forward order
+    for (rank, model) in rank_model_pairs.into_iter().rev() {
+        coder.encode_symbol(rank, model)
+            .map_err(|e| anyhow!("rANS encode_symbol failed: {:?}", e))?;
     }
 
     // finalize the coder (consumes coder) and get compressed words
@@ -220,9 +235,12 @@ pub fn encode_chunk(dict: &mut MultiTierDict, chunk_tokens: Vec<String>) -> Resu
         payload_bytes.extend(&w.to_be_bytes());
     }
 
-    // Debug print (optional) — shows rANS input sequence and payload words:
-    println!("ENCODER: encoded_ranks (reverse-order) = {:?}", encoded_ranks);
-    println!("ENCODER: payload words = {:?}", words);
+    // Debug print (optional)
+    if DEBUG {
+        println!("ENCODER: encoded_ranks (forward-order) = {:?}", encoded_ranks);
+        println!("ENCODER: payload words = {:?}", words);
+        println!("ENCODER: Note - symbols pushed to rANS in reverse order so they decode forward");
+    }
 
     Ok(Chunk { token_count: token_ids.len() as u32, deltas, features: features_vec, payload: payload_bytes })
 }
@@ -250,11 +268,21 @@ pub fn decode_chunk(dict: &mut MultiTierDict, ch: &Chunk) -> Result<String> {
     if rank_to_id.is_empty() {
         return Err(anyhow!("vocabulary empty when decoding"));
     }
-    let mut id_to_rank: HashMap<u32, usize> = HashMap::new();
-    for (r, &id) in rank_to_id.iter().enumerate() {
-        id_to_rank.insert(id, r);
-    }
     let vocab_size = rank_to_id.len(); // usize
+
+    // Debug print rank mapping
+    if DEBUG {
+        println!("\nDECODER: vocab_size={}, dict.next_id()={}", vocab_size, dict.next_id());
+        println!("DECODER: rank_to_id={:?}", rank_to_id);
+        println!("DECODER: Deltas applied: {:?}", ch.deltas);
+        // Print first few tokens in dictionary
+        println!("DECODER: First 10 dict entries:");
+        for i in 0..10.min(dict.next_id() as usize) {
+            if let Some(tok) = dict.lookup(i as u32) {
+                println!("  ID {}: '{}'", i, tok);
+            }
+        }
+    }
 
     // 2) Deserialize rANS words
     if ch.payload.len() % 4 != 0 {
@@ -265,19 +293,23 @@ pub fn decode_chunk(dict: &mut MultiTierDict, ch: &Chunk) -> Result<String> {
         words.push(u32::from_be_bytes(ch.payload[i..i + 4].try_into().unwrap()));
     }
 
-    // 3) Phase 1: rANS reverse decoding using the SAME PPM sequence (over ranks)
+    // 3) Phase 1: rANS decoding
+    // The encoder encoded in reverse order for rANS (LIFO stack)
+    // rANS decodes in forward order: rank[0], rank[1], ..., rank[len-1]
+    // We build PPM from past context (same as encoder did)
     let mut coder = DefaultAnsCoder::from_compressed(words)
         .map_err(|v| anyhow!("failed to create rANS decoder, leftover words: {:?}", v))?;
-    let mut decoded_ids_rev: Vec<u32> = Vec::with_capacity(ch.token_count as usize);
+    let mut decoded_ids: Vec<u32> = Vec::with_capacity(ch.token_count as usize);
+    let mut decoded_ranks: Vec<usize> = Vec::with_capacity(ch.token_count as usize);
 
-    // Recreate the PPM in reverse order and decode using the matching models (ranks).
-    let mut ppm_rev = PPMModel::new(2, vocab_size);
+    // Build PPM from past context (same as encoder)
+    let mut ppm = PPMModel::new(2, vocab_size);
     let mut prev: Vec<u32> = Vec::new(); // store ranks as u32
 
-    for i in (0..ch.token_count as usize).rev() {
+    for i in 0..ch.token_count as usize {  // FORWARD iteration
         let feature_mask = ch.features[i];
 
-        let (freqs, _total) = ppm_rev.get_freqs(&prev, feature_mask);
+        let (freqs, _total) = ppm.get_freqs(&prev, feature_mask);
         let n = freqs.len();
         if n == 0 {
             return Err(anyhow!("empty frequency vector in decoder"));
@@ -301,149 +333,33 @@ pub fn decode_chunk(dict: &mut MultiTierDict, ch: &Chunk) -> Result<String> {
         let rank = coder.decode_symbol(&model)
             .map_err(|e| anyhow!("rANS decode_symbol failed: {:?}", e))? as usize;
 
-        // map rank -> id (dictionary id) for forward reconstruction
+        // map rank -> id (dictionary id)
         let id = *rank_to_id.get(rank)
             .ok_or_else(|| anyhow!("rank {} out of range during decode", rank))?;
-        decoded_ids_rev.push(id);
+        decoded_ids.push(id);
+        decoded_ranks.push(rank);
 
-        // update the reverse-PPM with the decoded rank (so next reverse step
-        // builds the same model sequence the encoder used)
-        ppm_rev.update(&prev, feature_mask, rank as u32);
+        // update the PPM with the decoded rank (building context for next decode)
+        ppm.update(&prev, feature_mask, rank as u32);
         prev.push(rank as u32);
         if prev.len() > 2 { prev.remove(0); }
     }
 
-    // Reverse into forward order (ids)
-    decoded_ids_rev.reverse();
+    if DEBUG {
+        println!("DECODER: decoded_ranks={:?}", decoded_ranks);
+        println!("DECODER: decoded_ids={:?}", decoded_ids);
+    }
 
-    // 4) Phase 2: forward PPM reconstruction + text output (uses ids for lookup)
-    let mut ppm_forward = PPMModel::new(2, dict.next_id() as usize);
-    let mut prev_ids: Vec<u32> = Vec::new();
+    // 4) Phase 2: Convert IDs to tokens
     let mut out = String::new();
 
-    for (i, &id) in decoded_ids_rev.iter().enumerate() {
-        let feature_mask = ch.features[i];
-        ppm_forward.update(&prev_ids, feature_mask, id);
-
+    for &id in decoded_ids.iter() {
         if let Some(tok) = dict.lookup(id) {
             out.push_str(tok);
         } else {
             out.push_str("<UNK>");
         }
-
-        prev_ids.push(id);
-        if prev_ids.len() > 2 {
-            prev_ids.remove(0);
-        }
     }
 
-    Ok(out)
-}
-
-/// Temporary verbose decoder for debugging. Prints internal state step-by-step.
-pub fn decode_chunk_verbose(dict: &mut MultiTierDict, ch: &Chunk) -> Result<String> {
-    println!("--- decode_chunk_verbose: token_count={} deltas={}", ch.token_count, ch.deltas.len());
-    println!("deltas:");
-    for (id, tok) in &ch.deltas {
-        println!("  id={} tok=`{}`", id, tok);
-    }
-
-    // Apply deltas to dict (as real decoder does)
-    for (id, tok) in &ch.deltas {
-        dict.add_with_id(*id, tok);
-    }
-
-    // Build rank mapping
-    let next_usize = dict.next_id() as usize;
-    let mut rank_to_id: Vec<u32> = Vec::new();
-    for id_usize in 0..next_usize {
-        let id_u32 = id_usize as u32;
-        if dict.lookup(id_u32).is_some() {
-            rank_to_id.push(id_u32);
-        }
-    }
-    println!("rank_to_id (len={}): {:?}", rank_to_id.len(), rank_to_id);
-
-    let mut id_to_rank: HashMap<u32, usize> = HashMap::new();
-    for (r, &id) in rank_to_id.iter().enumerate() {
-        id_to_rank.insert(id, r);
-    }
-
-    // Deserialize payload -> words
-    let mut words = Vec::with_capacity(ch.payload.len() / 4);
-    for i in (0..ch.payload.len()).step_by(4) {
-        let w = u32::from_be_bytes(ch.payload[i..i+4].try_into().unwrap());
-        words.push(w);
-    }
-    println!("payload words (len={}): {:?}", words.len(), words);
-
-    // Create coder
-    let mut coder = DefaultAnsCoder::from_compressed(words.clone())
-        .map_err(|v| anyhow!("failed to create rANS decoder: {:?}", v))?;
-
-    // Reverse-phase decode (collect ranks as decoded)
-    println!("-- reverse-phase decoding:");
-    let mut ppm_rev = PPMModel::new(2, rank_to_id.len());
-    let mut prev: Vec<u32> = Vec::new();
-    let mut decoded_ids_rev: Vec<u32> = Vec::with_capacity(ch.token_count as usize);
-
-    for i in (0..ch.token_count as usize).rev() {
-        let feature_mask = ch.features[i];
-        let (freqs, _total) = ppm_rev.get_freqs(&prev, feature_mask);
-        let n = freqs.len();
-        println!(" step rev i={} prev={:?} freqs.len={} first8={:?}", i, prev, n, &freqs.iter().take(8).cloned().collect::<Vec<_>>());
-        let total_f: f64 = freqs.iter().map(|&v| v as f64).sum();
-        let probs: Vec<f64> = if total_f > 0.0 {
-            freqs.iter().map(|&v| (v as f64) / total_f).collect()
-        } else {
-            vec![1.0_f64 / (n as f64); n]
-        };
-
-        let model = Model::from_floating_point_probabilities_perfect(&probs)
-            .or_else(|_| Model::from_floating_point_probabilities_perfect(&vec![1.0_f64 / (probs.len() as f64); probs.len()]))
-            .map_err(|_| anyhow!("failed to build model (verbose decode)"))?;
-
-        let rank = coder.decode_symbol(&model)
-            .map_err(|e| anyhow!("rANS decode_symbol failed (verbose): {:?}", e))? as usize;
-        let id = *rank_to_id.get(rank)
-            .ok_or_else(|| anyhow!("rank {} out of range in verbose decode", rank))?;
-        println!("  decoded rank={} -> id={}", rank, id);
-
-        decoded_ids_rev.push(id);
-
-        ppm_rev.update(&prev, feature_mask, rank as u32);
-        prev.push(rank as u32);
-        if prev.len() > 2 { prev.remove(0); }
-    }
-
-    println!("decoded_ids_rev (before reverse) = {:?}", decoded_ids_rev);
-    decoded_ids_rev.reverse();
-    println!("decoded_ids forward = {:?}", decoded_ids_rev);
-
-    // Forward-phase: rebuild PPM over ids + output tokens
-    println!("-- forward-phase reconstruct");
-    let mut ppm_forward = PPMModel::new(2, dict.next_id() as usize);
-    let mut prev_ids: Vec<u32> = Vec::new();
-    let mut out = String::new();
-    for (i, &id) in decoded_ids_rev.iter().enumerate() {
-        let feature_mask = ch.features[i];
-        ppm_forward.update(&prev_ids, feature_mask, id);
-        println!(
-            " forward i={} id={} tok=`{}` prev_ids={:?}",
-            i,
-            id,
-            dict.lookup(id).map_or("<UNK>", |v| v.as_str()),
-            prev_ids
-        );
-        if let Some(tok) = dict.lookup(id) {
-            out.push_str(tok);
-        } else {
-            out.push_str("<UNK>");
-        }
-        prev_ids.push(id);
-        if prev_ids.len() > 2 { prev_ids.remove(0); }
-    }
-
-    println!("final output: `{}`", out);
     Ok(out)
 }

@@ -14,13 +14,12 @@ impl MultiTierDict {
         let global: Vec<String> = Vec::new();
         let mut map = HashMap::new();
         let mut rev = HashMap::new();
-        let mut next = 0u32;
         // If you want seed global tokens: push here and set map/rev accordingly
         for (i, tok) in global.iter().enumerate() {
             map.insert(tok.clone(), i as u32);
             rev.insert(i as u32, tok.clone());
         }
-        next = global.len() as u32;
+        let next = global.len() as u32;
         Self { global, map, rev, next }
     }
 
