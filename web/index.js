@@ -1,4 +1,4 @@
-// Enhanced Indic Compressor Web Interface - WITH COMPRESSION INFO & FILE UPLOAD
+// Enhanced Indic Compressor Web Interface - Production Version
 import init, { encode_stream_wasm, decode_prefix_wasm, decode_full_wasm } from './pkg/indic_ans_compressor.js';
 
 // State
@@ -87,7 +87,7 @@ function hideResults() {
   latestStreamBytes = null;
 }
 
-// --- slider labels show initial values on load ---
+// Initialize slider displays
 (function initSliderDisplays() {
   const chunkSize = document.getElementById('chunkSize');
   const chunkSizeDisplay = document.getElementById('chunkSizeDisplay');
@@ -127,51 +127,74 @@ function hideResults() {
 })();
 
 /**
- * Count chunks robustly by parsing stream framing:
+ * Count chunks by parsing binary stream format.
+ * Format per chunk:
  * - magic "IC" (2 bytes)
- * - token_count (u32 BE)
- * - delta_count (u16 BE)
- * - each delta: id (u32 BE), token_len (u16 BE), token bytes
- * - features: token_count bytes
- * - payload_len: u32 BE
+ * - token_count (u16 BE)
+ * - delta_count (u8)
+ * - deltas: [id (u16 BE), token_len (u8), token_bytes]*
+ * - features (token_count bytes)
+ * - payload_len (u16 BE)
  * - payload bytes
  */
 function countChunksFromBinary(u8) {
   if (!u8 || u8.length < 2) return 0;
-  // "UC" uncompressed fallback
-  if (u8[0] === 0x55 && u8[1] === 0x43) return 1;
+  
+  // Check for uncompressed format
+  if (u8[0] === 0x55 && u8[1] === 0x43) return 1; // "UC"
+  
+  // Check for compressed format
+  if (u8[0] !== 0x49 || u8[1] !== 0x43) return 0; // Not "IC"
 
   const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
   let pos = 0;
   let count = 0;
+  
   try {
     while (pos + 2 <= u8.length) {
-      if (u8[pos] !== 0x49 || u8[pos+1] !== 0x43) break; // not "IC"
+      // Check magic bytes
+      if (u8[pos] !== 0x49 || u8[pos+1] !== 0x43) break;
       pos += 2;
-      if (pos + 4 > u8.length) break;
-      const token_count = dv.getUint32(pos, false); pos += 4; // BE
+      
+      // Read token_count (u16 BE)
       if (pos + 2 > u8.length) break;
-      const delta_count = dv.getUint16(pos, false); pos += 2; // BE
-      // deltas
+      const token_count = dv.getUint16(pos, false);
+      pos += 2;
+      
+      // Read delta_count (u8)
+      if (pos + 1 > u8.length) break;
+      const delta_count = u8[pos];
+      pos += 1;
+      
+      // Skip deltas
       for (let i = 0; i < delta_count; i++) {
-        if (pos + 6 > u8.length) { pos = u8.length; break; }
-        const id = dv.getUint32(pos, false); pos += 4;
-        const len = dv.getUint16(pos, false); pos += 2;
-        pos += len;
-        if (pos > u8.length) { pos = u8.length; break; }
+        if (pos + 3 > u8.length) { pos = u8.length; break; }
+        pos += 2; // id (u16)
+        const len = u8[pos];
+        pos += 1; // token_len (u8)
+        if (pos + len > u8.length) { pos = u8.length; break; }
+        pos += len; // token bytes
       }
-      // features
+      
+      // Skip features
+      if (pos + token_count > u8.length) break;
       pos += token_count;
-      if (pos > u8.length) break;
-      if (pos + 4 > u8.length) break;
-      const payload_len = dv.getUint32(pos, false); pos += 4;
+      
+      // Read payload_len (u16 BE)
+      if (pos + 2 > u8.length) break;
+      const payload_len = dv.getUint16(pos, false);
+      pos += 2;
+      
+      // Skip payload
+      if (pos + payload_len > u8.length) break;
       pos += payload_len;
-      if (pos > u8.length) break;
+      
       count++;
     }
   } catch (e) {
-    console.error('countChunksFromBinary error:', e);
+    console.error('Error parsing chunks:', e);
   }
+  
   return count;
 }
 
@@ -226,10 +249,10 @@ async function handleEncode() {
       showToast('ℹ️ Text stored uncompressed (too small to benefit from compression)', 'info');
     } else if (savings > 0) {
       safeSetText('compressionRatio', `${ratio}% (${savings.toLocaleString()} bytes saved)`);
-      showToast(`Compressed to ${ratio}% of original size`, 'success');
+      showToast(`✓ Compressed to ${ratio}% of original size`, 'success');
     } else {
       safeSetText('compressionRatio', `${ratio}% (${Math.abs(savings).toLocaleString()} bytes overhead)`);
-      showToast(`Result is larger (${ratio}%)`, 'warning');
+      showToast(`⚠ Result is larger (${ratio}%)`, 'warning');
     }
     
     safeSetText('chunkCount', chunks.toLocaleString());
@@ -237,6 +260,16 @@ async function handleEncode() {
     safeSetAttribute('chunkToDecode', 'max', Math.max(0, chunks));
     safeSetAttribute('chunkToDecode', 'value', Math.max(0, chunks));
     safeSetText('chunkToDecodeDisplay', Math.max(0, chunks));
+    
+    // Update slider fill
+    const chunkToDecodeSlider = document.getElementById('chunkToDecode');
+    if (chunkToDecodeSlider) {
+      const min = Number(chunkToDecodeSlider.min || 0);
+      const max = Number(chunkToDecodeSlider.max || 1);
+      const val = Number(chunkToDecodeSlider.value);
+      const percent = max === min ? 0 : (val - min) / (max - min) * 100;
+      chunkToDecodeSlider.style.background = `linear-gradient(90deg, var(--primary) ${percent}%, var(--border) ${percent}%)`;
+    }
     
     safeSetDisplay('resultsPanel', 'block');
     if (!isUncompressed && chunks > 1) {
@@ -256,17 +289,17 @@ async function handleEncode() {
           a.download = 'indic_compressed.bin';
           a.click();
           URL.revokeObjectURL(url);
-          showToast('File downloaded', 'success');
+          showToast('✓ File downloaded', 'success');
         } catch (e) {
           console.error('Download error:', e);
-          showToast('Download failed', 'error');
+          showToast('❌ Download failed', 'error');
         }
       };
     }
     
   } catch (e) {
     console.error('Encode error:', e);
-    showToast(`Compression failed: ${e.message || e}`, 'error');
+    showToast(`❌ Compression failed: ${e.message || e}`, 'error');
   } finally {
     const btn = document.getElementById('btnEncode');
     if (btn) {
@@ -288,9 +321,14 @@ async function handleDecodeAll() {
     
     const fmt = getCompressionFormat(latestStreamBytes);
     let decoded = '';
+    
     if (fmt === 'uncompressed') {
-      // "UC" fallback: rest is utf8 text
-      decoded = new TextDecoder().decode(latestStreamBytes.slice(2));
+      // Uncompressed format: skip magic (2 bytes) + length (4 bytes)
+      if (latestStreamBytes.length >= 6) {
+        decoded = new TextDecoder().decode(latestStreamBytes.slice(6));
+      } else {
+        throw new Error('Invalid uncompressed format');
+      }
     } else {
       if (!wasmReady) {
         showToast('WASM not ready for decompression', 'error');
@@ -307,23 +345,23 @@ async function handleDecodeAll() {
         safeSetText('outputStatus', '✓ Perfect match');
         const status = document.getElementById('outputStatus');
         if (status) status.className = 'status-badge success';
-        showToast('Decompression successful - perfect match!', 'success');
+        showToast('✓ Decompression successful - perfect match!', 'success');
       } else {
         safeSetText('outputStatus', '⚠ Mismatch detected');
         const status = document.getElementById('outputStatus');
         if (status) status.className = 'status-badge warning';
-        showToast('Decoded text does not match original', 'warning');
+        showToast('⚠ Decoded text does not match original', 'warning');
       }
     } else {
       safeSetText('outputStatus', '✓ Decompressed');
       const status = document.getElementById('outputStatus');
       if (status) status.className = 'status-badge info';
-      showToast('Decompression complete', 'success');
+      showToast('✓ Decompression complete', 'success');
     }
     
   } catch (e) {
     console.error('Decode error:', e);
-    showToast(`Decompression failed: ${e.message || e}`, 'error');
+    showToast(`❌ Decompression failed: ${e.message || e}`, 'error');
   } finally {
     const btn = document.getElementById('btnDecodeAll');
     if (btn) { btn.disabled = false; btn.textContent = '✓ Decompress All'; }
@@ -338,6 +376,12 @@ async function handleDecodePrefix() {
     }
     
     const upto = Math.max(0, Number(safeGetValue('chunkToDecode')) || 0);
+    
+    if (upto === 0) {
+      showToast('Please select at least 1 chunk to decode', 'warning');
+      return;
+    }
+    
     const btn = document.getElementById('btnDecodePrefix');
     if (btn) { btn.disabled = true; btn.textContent = 'Decoding...'; }
     
@@ -347,13 +391,13 @@ async function handleDecodePrefix() {
     safeSetText('outputStatus', `Partial decode (${upto} chunk${upto !== 1 ? 's' : ''})`);
     const status = document.getElementById('outputStatus');
     if (status) status.className = 'status-badge info';
-    showToast(`Decoded first ${upto} chunk${upto !== 1 ? 's' : ''}`, 'success');
+    showToast(`✓ Decoded first ${upto} chunk${upto !== 1 ? 's' : ''}`, 'success');
   } catch (e) {
     console.error('Decode prefix error:', e);
-    showToast(`Partial decompression failed: ${e.message || e}`, 'error');
+    showToast(`❌ Partial decompression failed: ${e.message || e}`, 'error');
   } finally {
     const btn = document.getElementById('btnDecodePrefix');
-    if (btn) { btn.disabled = false; btn.textContent = '▶Decode Partial'; }
+    if (btn) { btn.disabled = false; btn.textContent = '▶ Decode Partial'; }
   }
 }
 
@@ -362,10 +406,10 @@ async function handleCopyOutput() {
     const el = document.getElementById('decodedOutput');
     const text = el ? (el.textContent || '') : '';
     await navigator.clipboard.writeText(text);
-    showToast('Copied to clipboard', 'success');
+    showToast('✓ Copied to clipboard', 'success');
   } catch (e) {
     console.error('Copy error:', e);
-    showToast('Failed to copy', 'error');
+    showToast('❌ Failed to copy', 'error');
   }
 }
 
@@ -373,24 +417,18 @@ async function initWasm() {
   try {
     await init();
     wasmReady = true;
-    console.log('✓ WASM loaded');
     showToast('✓ Ready to compress', 'success');
     return true;
   } catch (err) {
     console.error('WASM init failed:', err);
-    showToast('Failed to load module', 'error');
+    showToast('❌ Failed to load module', 'error');
     const btn = document.getElementById('btnEncode');
     if (btn) btn.disabled = true;
     return false;
   }
 }
 
-// --- File upload / drag & drop helpers ---
-
-/**
- * Read a File (.bin) and load into latestStreamBytes (Uint8Array).
- * Also updates UI fields (uploadedInfo, chunkCount, decodePanel).
- */
+// File upload handlers
 async function loadBinFile(file) {
   try {
     if (!file) throw new Error("No file provided");
@@ -404,25 +442,31 @@ async function loadBinFile(file) {
 
     const fmt = getCompressionFormat(latestStreamBytes);
     const chunks = countChunksFromBinary(latestStreamBytes);
+    
     safeSetText('chunkCount', `${chunks}`);
     safeSetAttribute('chunkToDecode', 'max', Math.max(0, chunks));
     safeSetAttribute('chunkToDecode', 'value', Math.max(0, chunks));
     safeSetText('chunkToDecodeDisplay', `${Math.max(0, chunks)}`);
 
+    const chunkToDecodeSlider = document.getElementById('chunkToDecode');
+    if (chunkToDecodeSlider) {
+      const min = Number(chunkToDecodeSlider.min || 0);
+      const max = Number(chunkToDecodeSlider.max || 1);
+      const val = Number(chunkToDecodeSlider.value);
+      const percent = max === min ? 0 : (val - min) / (max - min) * 100;
+      chunkToDecodeSlider.style.background = `linear-gradient(90deg, var(--primary) ${percent}%, var(--border) ${percent}%)`;
+    }
+
     safeSetDisplay('resultsPanel', 'block');
     safeSetDisplay('decodePanel', chunks > 0 ? 'block' : 'none');
 
-    showToast(`Loaded ${name} (${size.toLocaleString()} bytes) — ${fmt}`, 'success');
+    showToast(`✓ Loaded ${name} (${size.toLocaleString()} bytes) — ${fmt}`, 'success');
   } catch (e) {
     console.error("loadBinFile error:", e);
-    showToast(`Failed to load file: ${e.message || e}`, 'error');
+    showToast(`❌ Failed to load file: ${e.message || e}`, 'error');
   }
 }
 
-/**
- * Install UI handlers for file input, drag/drop, and buttons.
- * Call this from initialize().
- */
 function installFileUploadUI() {
   const fileInput = document.getElementById('fileInput');
   const btnLoadFile = document.getElementById('btnLoadFile');
@@ -431,7 +475,6 @@ function installFileUploadUI() {
   const uploadArea = document.getElementById('uploadArea');
 
   if (!fileInput || !btnLoadFile || !btnDecodeUpload || !btnClearUpload || !uploadArea) {
-    console.warn("File upload UI elements not found — skipping installation.");
     return;
   }
 
@@ -454,22 +497,28 @@ function installFileUploadUI() {
 
   btnClearUpload.addEventListener('click', () => {
     latestStreamBytes = null;
+    latestOriginalText = '';
+    if (fileInput) fileInput.value = '';
     safeSetText('uploadedInfo', 'No file loaded');
-    safeSetText('chunkCount', '0');
+    safeSetText('chunkCount', '—');
     safeSetAttribute('chunkToDecode', 'max', 0);
     safeSetAttribute('chunkToDecode', 'value', 0);
     safeSetText('chunkToDecodeDisplay', '0');
+    safeSetDisplay('resultsPanel', 'none');
     safeSetDisplay('decodePanel', 'none');
-    showToast('Cleared uploaded file', 'info');
+    safeSetDisplay('outputPanel', 'none');
+    showToast('✓ Cleared uploaded file', 'info');
   });
 
   uploadArea.addEventListener('dragover', (ev) => {
     ev.preventDefault();
     uploadArea.classList.add('dragover');
   });
+  
   uploadArea.addEventListener('dragleave', (ev) => {
     uploadArea.classList.remove('dragover');
   });
+  
   uploadArea.addEventListener('drop', async (ev) => {
     ev.preventDefault();
     uploadArea.classList.remove('dragover');
@@ -483,7 +532,7 @@ function installFileUploadUI() {
   });
 }
 
-// --- UI wiring ---
+// Setup event listeners
 function setupEventListeners() {
   const inputText = document.getElementById('inputText');
   if (inputText) inputText.addEventListener('input', updateStats);
@@ -520,13 +569,12 @@ function setupEventListeners() {
   if (btnCopyOutput) btnCopyOutput.addEventListener('click', handleCopyOutput);
 }
 
+// Initialize
 async function initialize() {
-  console.log('Initializing...');
   setupEventListeners();
   updateStats();
   installFileUploadUI();
   await initWasm();
-  console.log('Ready!');
 }
 
 if (document.readyState === 'loading') {
