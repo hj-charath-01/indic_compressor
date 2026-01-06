@@ -15,7 +15,7 @@
 
     <!-- Main Input Section -->
     <section class="panel">
-      <h2> Input Text</h2>
+      <h2>Input Text</h2>
       <label for="inputText" class="label">Enter text in any Indic script (Hindi, Tamil, Telugu, etc.)</label>
       <textarea 
         id="inputText" 
@@ -38,7 +38,7 @@
 
     <!-- Compression Settings -->
     <section class="panel">
-      <h2> Compression Settings</h2>
+      <h2>Compression Settings</h2>
       
       <div class="setting-group">
         <label for="chunkSize" class="label">
@@ -56,14 +56,14 @@
            Compress Text
         </button>
         <button id="btnClear" class="btn btn-secondary">
-           Clear
+          Clear
         </button>
       </div>
     </section>
 
     <!-- Compression Results -->
     <section class="panel" id="resultsPanel" style="display: none;">
-      <h2> Compression Results</h2>
+      <h2>Compression Results</h2>
       
       <div class="results-grid">
         <div class="result-card">
@@ -86,7 +86,7 @@
 
       <div class="button-group">
         <button id="btnDownload" class="btn btn-primary">
-           Download .bin
+          Download .bin
         </button>
         <button id="btnDecodeAll" class="btn btn-secondary">
            Decompress All
@@ -94,9 +94,32 @@
       </div>
     </section>
 
+    <!-- Upload .bin (new) -->
+    <section class="panel" id="uploadSection">
+      <h2>Load Compressed File (.bin)</h2>
+      <p class="muted">Load a previously saved compressed stream to decompress or preview. Drag & drop supported.</p>
+
+      <div id="uploadArea" class="upload-area">
+        <div class="upload-left">
+          <input id="fileInput" type="file" accept=".bin,application/octet-stream" />
+          <button id="btnLoadFile" class="btn">Load File</button>
+        </div>
+
+        <div class="upload-right">
+          <div id="uploadedInfo" class="upload-info">No file loaded</div>
+          <div class="upload-actions">
+            <button id="btnDecodeUpload" class="btn btn-primary">Decompress Uploaded File</button>
+            <button id="btnClearUpload" class="btn btn-secondary">Clear</button>
+          </div>
+        </div>
+      </div>
+
+      <small class="muted">Tip: after loading, use "Decompress All" or progressive decode.</small>
+    </section>
+
     <!-- Progressive Decoding -->
     <section class="panel" id="decodePanel" style="display: none;">
-      <h2> Progressive Decoding</h2>
+      <h2>Progressive Decoding</h2>
       <p class="info-text">Decode only part of the compressed stream (useful for previews or streaming)</p>
       
       <div class="setting-group">
@@ -112,14 +135,14 @@
 
       <div class="button-group">
         <button id="btnDecodePrefix" class="btn btn-primary">
-           Decode Partial
+          ▶Decode Partial
         </button>
       </div>
     </section>
 
     <!-- Decoded Output -->
     <section class="panel" id="outputPanel" style="display: none;">
-      <h2> Decoded Output</h2>
+      <h2>Decoded Output</h2>
       <div class="output-header">
         <span id="outputStatus" class="status-badge">—</span>
         <button id="btnCopyOutput" class="btn btn-small">Copy</button>
@@ -129,7 +152,7 @@
 
     <!-- Help Section -->
     <section class="panel help-section">
-      <h2> How to Use</h2>
+      <h2>How to Use</h2>
       <div class="help-content">
         <div class="help-item">
           <strong>1. Enter Text:</strong> Type or paste Indic script text in the input box. The compressor works with any Indic script (Devanagari, Tamil, Telugu, Gujarati, etc.).

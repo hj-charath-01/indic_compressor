@@ -7,6 +7,8 @@ export function decode_prefix_wasm(data: Uint8Array, upto: number): string;
 
 export function encode_stream_wasm(text: string, chunk_size: number): Uint8Array;
 
+export function get_compression_info(text: string, chunk_size: number): string;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
@@ -14,6 +16,7 @@ export interface InitOutput {
   readonly decode_full_wasm: (a: number, b: number) => [number, number, number, number];
   readonly decode_prefix_wasm: (a: number, b: number, c: number) => [number, number, number, number];
   readonly encode_stream_wasm: (a: number, b: number, c: number) => [number, number, number, number];
+  readonly get_compression_info: (a: number, b: number, c: number) => [number, number, number, number];
   readonly __wbindgen_externrefs: WebAssembly.Table;
   readonly __wbindgen_malloc: (a: number, b: number) => number;
   readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;

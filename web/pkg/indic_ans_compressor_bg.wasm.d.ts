@@ -4,6 +4,7 @@ export const memory: WebAssembly.Memory;
 export const decode_full_wasm: (a: number, b: number) => [number, number, number, number];
 export const decode_prefix_wasm: (a: number, b: number, c: number) => [number, number, number, number];
 export const encode_stream_wasm: (a: number, b: number, c: number) => [number, number, number, number];
+export const get_compression_info: (a: number, b: number, c: number) => [number, number, number, number];
 export const __wbindgen_externrefs: WebAssembly.Table;
 export const __wbindgen_malloc: (a: number, b: number) => number;
 export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
