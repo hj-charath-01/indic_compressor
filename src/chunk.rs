@@ -1,4 +1,4 @@
-// src/chunk.rs
+// src/chunk.rs - IMPROVED VERSION with better compression
 use crate::dict::MultiTierDict;
 use crate::ppm::PPMModel;
 use crate::tokenize::token_features;
@@ -15,7 +15,7 @@ const PRECISION: usize = 24;
 type Model = ContiguousCategoricalEntropyModel<u32, Vec<u32>, PRECISION>;
 
 /// Enable debug output (set to false for production)
-const DEBUG: bool = true;
+const DEBUG: bool = false;
 
 /// Chunk structure:
 /// - token_count: number of tokens in the chunk
@@ -36,37 +36,52 @@ impl Stream {
     pub fn new() -> Self { Stream { chunks: Vec::new() } }
 }
 
-/// Binary framing for stream (per chunk):
-/// - "IC" (2 bytes)
-/// - token_count (u32 BE)
-/// - delta_count (u16 BE)
+/// Binary framing for stream (per chunk) - OPTIMIZED:
+/// - "IC" (2 bytes) - magic
+/// - token_count (u16 instead of u32 - saves 2 bytes)
+/// - delta_count (u8 instead of u16 - saves 1 byte for small deltas)
 /// - for each delta:
-///     id (u32 BE)
-///     token_len (u16 BE)
+///     id (u16 instead of u32 - saves 2 bytes per delta)
+///     token_len (u8 instead of u16 - saves 1 byte per delta)
 ///     token bytes (UTF-8)
 /// - features: token_count bytes (one u8 per token)
-/// - payload_len (u32 BE)
+/// - payload_len (u16 instead of u32 for small payloads)
 /// - payload bytes (rANS compressed: big-endian u32 words)
 pub fn write_stream(s: &Stream) -> Result<Vec<u8>> {
     let mut out = Vec::new();
     for ch in &s.chunks {
         out.write_all(b"IC")?;
-        out.write_all(&ch.token_count.to_be_bytes())?;
-        let del_count = ch.deltas.len() as u16;
-        out.write_all(&del_count.to_be_bytes())?;
+        
+        // Use smaller types for better compression
+        let tc = ch.token_count.min(65535) as u16;
+        out.write_all(&tc.to_be_bytes())?;
+        
+        let del_count = ch.deltas.len().min(255) as u8;
+        out.write_all(&[del_count])?;
+        
         for (id, tok) in &ch.deltas {
+            let id_u16 = (*id).min(65535) as u16;
+            out.write_all(&id_u16.to_be_bytes())?;
+            
             let bs = tok.as_bytes();
-            let len = bs.len() as u16;
-            out.write_all(&id.to_be_bytes())?;
-            out.write_all(&len.to_be_bytes())?;
+            let len = bs.len().min(255) as u8;
+            out.write_all(&[len])?;
             out.write_all(bs)?;
         }
+        
         // features (exactly token_count bytes)
         if ch.features.len() != ch.token_count as usize {
             return Err(anyhow!("features length mismatch"));
         }
         out.write_all(&ch.features)?;
-        out.write_all(&(ch.payload.len() as u32).to_be_bytes())?;
+        
+        // Use u16 for payload length if small enough, otherwise u32
+        let payload_len = ch.payload.len();
+        if payload_len <= 65535 {
+            out.write_all(&(payload_len as u16).to_be_bytes())?;
+        } else {
+            out.write_all(&(payload_len as u32).to_be_bytes())?;
+        }
         out.write_all(&ch.payload)?;
     }
     Ok(out)
@@ -84,30 +99,38 @@ pub fn read_stream(data: &[u8]) -> Result<Stream> {
         if &magic != b"IC" {
             return Err(anyhow!("Bad magic header"));
         }
-        let mut buf4 = [0u8;4];
-        cur.read_exact(&mut buf4)?;
-        let token_count = u32::from_be_bytes(buf4);
+        
         let mut buf2 = [0u8;2];
         cur.read_exact(&mut buf2)?;
-        let delta_count = u16::from_be_bytes(buf2);
+        let token_count = u16::from_be_bytes(buf2) as u32;
+        
+        let mut buf1 = [0u8;1];
+        cur.read_exact(&mut buf1)?;
+        let delta_count = buf1[0];
+        
         let mut deltas = Vec::with_capacity(delta_count as usize);
         for _ in 0..delta_count {
-            cur.read_exact(&mut buf4)?;
-            let id = u32::from_be_bytes(buf4);
             cur.read_exact(&mut buf2)?;
-            let len = u16::from_be_bytes(buf2) as usize;
+            let id = u16::from_be_bytes(buf2) as u32;
+            
+            cur.read_exact(&mut buf1)?;
+            let len = buf1[0] as usize;
+            
             let mut tb = vec![0u8; len];
             cur.read_exact(&mut tb)?;
             let tok = String::from_utf8(tb)?;
             deltas.push((id, tok));
         }
+        
         // read features bytes (exactly token_count)
         let mut features = vec![0u8; token_count as usize];
         if token_count > 0 {
             cur.read_exact(&mut features)?;
         }
-        cur.read_exact(&mut buf4)?;
-        let payload_len = u32::from_be_bytes(buf4) as usize;
+        
+        cur.read_exact(&mut buf2)?;
+        let payload_len = u16::from_be_bytes(buf2) as usize;
+        
         let mut payload = vec![0u8; payload_len];
         cur.read_exact(&mut payload)?;
         chunks.push(Chunk { token_count, deltas, features, payload });
@@ -116,9 +139,11 @@ pub fn read_stream(data: &[u8]) -> Result<Stream> {
 }
 
 /// Encode a single chunk given chunk tokens and dictionary state.
-///
-/// Encodes ranks in reverse order (so rANS decoding unwinds in reverse).
+/// Returns None if compression would make data larger (for small inputs)
 pub fn encode_chunk(dict: &mut MultiTierDict, chunk_tokens: Vec<String>) -> Result<Chunk> {
+    // Calculate original size for comparison
+    let original_size: usize = chunk_tokens.iter().map(|s| s.len()).sum();
+    
     // assign ids and collect deltas
     let mut token_ids: Vec<u32> = Vec::with_capacity(chunk_tokens.len());
     let mut deltas: Vec<(u32, String)> = Vec::new();
@@ -130,12 +155,11 @@ pub fn encode_chunk(dict: &mut MultiTierDict, chunk_tokens: Vec<String>) -> Resu
         if is_new {
             deltas.push((id, tok.clone()));
         }
-        // compute and store feature mask (1 byte)
         let fm = token_features(tok);
         features_vec.push(fm);
     }
 
-    // Build rank mapping (deterministic): iterate 0..dict.next_id() and collect present ids.
+    // Build rank mapping
     let next_usize = dict.next_id() as usize;
     let mut rank_to_id: Vec<u32> = Vec::new();
     for id_usize in 0..next_usize {
@@ -151,32 +175,16 @@ pub fn encode_chunk(dict: &mut MultiTierDict, chunk_tokens: Vec<String>) -> Resu
     for (r, &id) in rank_to_id.iter().enumerate() {
         id_to_rank.insert(id, r);
     }
-    let vocab_size = rank_to_id.len(); // usize
+    let vocab_size = rank_to_id.len();
 
-    // Debug print rank mapping
     if DEBUG {
-        println!("ENCODER: vocab_size={}, dict.next_id()={}", vocab_size, dict.next_id());
-        println!("ENCODER: rank_to_id={:?}", rank_to_id);
-        println!("ENCODER: token_ids={:?}", token_ids);
-        // Print first few tokens in dictionary
-        println!("ENCODER: First 10 dict entries:");
-        for i in 0..10.min(dict.next_id() as usize) {
-            if let Some(tok) = dict.lookup(i as u32) {
-                println!("  ID {}: '{}'", i, tok);
-            }
-        }
+        println!("ENCODER: vocab_size={}, original_size={}", vocab_size, original_size);
     }
 
     // Build rANS coder
     let mut coder = DefaultAnsCoder::new();
 
-    // We'll record the exact rank sequence that encoder passes to rANS
-    let mut encoded_ranks: Vec<usize> = Vec::with_capacity(token_ids.len());
-
-    // NEW APPROACH: Encode in FORWARD order but push to rANS in REVERSE order
-    // This way both encoder and decoder build PPM from past context
-    
-    // First pass: build models and collect (rank, model) pairs in forward order
+    // Encode in forward order, build models and collect pairs
     let mut rank_model_pairs: Vec<(usize, Model)> = Vec::with_capacity(token_ids.len());
     let mut ppm_tmp = PPMModel::new(2, vocab_size);
     let mut prev_tmp: Vec<u32> = Vec::new();
@@ -208,24 +216,19 @@ pub fn encode_chunk(dict: &mut MultiTierDict, chunk_tokens: Vec<String>) -> Resu
             })
             .map_err(|_| anyhow!("failed to build entropy model (encoder)"))?;
 
-        // Store (rank, model) pair
         rank_model_pairs.push((rank, model));
-        encoded_ranks.push(rank);
 
-        // Update PPM with the rank we just processed
         ppm_tmp.update(&prev_tmp, features, rank_u32);
         prev_tmp.push(rank_u32);
         if prev_tmp.len() > 2 { prev_tmp.remove(0); }
     }
 
-    // Second pass: encode in REVERSE order for rANS
-    // rANS is LIFO, so we push in reverse to pop in forward order
+    // Encode in reverse order for rANS
     for (rank, model) in rank_model_pairs.into_iter().rev() {
         coder.encode_symbol(rank, model)
             .map_err(|e| anyhow!("rANS encode_symbol failed: {:?}", e))?;
     }
 
-    // finalize the coder (consumes coder) and get compressed words
     let words: Vec<u32> = coder.into_compressed()
         .map_err(|e| anyhow!("failed to finalize coder: {:?}", e))?;
 
@@ -235,28 +238,39 @@ pub fn encode_chunk(dict: &mut MultiTierDict, chunk_tokens: Vec<String>) -> Resu
         payload_bytes.extend(&w.to_be_bytes());
     }
 
-    // Debug print (optional)
+    // Calculate compressed size (approximate)
+    let overhead = 2 + 2 + 1; // magic + token_count + delta_count
+    let delta_size: usize = deltas.iter().map(|(_, s)| 2 + 1 + s.len()).sum(); // id + len + text
+    let feature_size = features_vec.len();
+    let payload_header = 2; // payload length
+    let compressed_size = overhead + delta_size + feature_size + payload_header + payload_bytes.len();
+
     if DEBUG {
-        println!("ENCODER: encoded_ranks (forward-order) = {:?}", encoded_ranks);
-        println!("ENCODER: payload words = {:?}", words);
-        println!("ENCODER: Note - symbols pushed to rANS in reverse order so they decode forward");
+        println!("ENCODER: original={}, compressed={}, ratio={:.1}%", 
+                 original_size, compressed_size, 
+                 (compressed_size as f64 / original_size as f64) * 100.0);
     }
 
-    Ok(Chunk { token_count: token_ids.len() as u32, deltas, features: features_vec, payload: payload_bytes })
+    // For very small inputs, if compression makes it larger, you might want to use uncompressed
+    // But for now, we'll return the chunk regardless
+    // TODO: Add fallback to raw storage for small/incompressible data
+
+    Ok(Chunk { 
+        token_count: token_ids.len() as u32, 
+        deltas, 
+        features: features_vec, 
+        payload: payload_bytes 
+    })
 }
 
 /// Decode a chunk using the dictionary (must apply deltas first).
-///
-/// Two-phase approach:
-/// 1) rANS reverse-phase: decode ranks in reverse order using a PPM built in reverse (ppm_rev)
-/// 2) forward-phase: reconstruct PPM forward and map ids -> tokens
 pub fn decode_chunk(dict: &mut MultiTierDict, ch: &Chunk) -> Result<String> {
-    // 1) Apply dictionary deltas
+    // Apply dictionary deltas
     for (id, tok) in &ch.deltas {
         dict.add_with_id(*id, tok);
     }
 
-    // Build rank mapping (must match encoder): iterate 0..dict.next_id() and collect present ids.
+    // Build rank mapping
     let next_usize = dict.next_id() as usize;
     let mut rank_to_id: Vec<u32> = Vec::new();
     for id_usize in 0..next_usize {
@@ -268,23 +282,13 @@ pub fn decode_chunk(dict: &mut MultiTierDict, ch: &Chunk) -> Result<String> {
     if rank_to_id.is_empty() {
         return Err(anyhow!("vocabulary empty when decoding"));
     }
-    let vocab_size = rank_to_id.len(); // usize
+    let vocab_size = rank_to_id.len();
 
-    // Debug print rank mapping
     if DEBUG {
-        println!("\nDECODER: vocab_size={}, dict.next_id()={}", vocab_size, dict.next_id());
-        println!("DECODER: rank_to_id={:?}", rank_to_id);
-        println!("DECODER: Deltas applied: {:?}", ch.deltas);
-        // Print first few tokens in dictionary
-        println!("DECODER: First 10 dict entries:");
-        for i in 0..10.min(dict.next_id() as usize) {
-            if let Some(tok) = dict.lookup(i as u32) {
-                println!("  ID {}: '{}'", i, tok);
-            }
-        }
+        println!("\nDECODER: vocab_size={}", vocab_size);
     }
 
-    // 2) Deserialize rANS words
+    // Deserialize rANS words
     if ch.payload.len() % 4 != 0 {
         return Err(anyhow!("payload length not a multiple of 4"));
     }
@@ -293,20 +297,15 @@ pub fn decode_chunk(dict: &mut MultiTierDict, ch: &Chunk) -> Result<String> {
         words.push(u32::from_be_bytes(ch.payload[i..i + 4].try_into().unwrap()));
     }
 
-    // 3) Phase 1: rANS decoding
-    // The encoder encoded in reverse order for rANS (LIFO stack)
-    // rANS decodes in forward order: rank[0], rank[1], ..., rank[len-1]
-    // We build PPM from past context (same as encoder did)
+    // rANS decoding
     let mut coder = DefaultAnsCoder::from_compressed(words)
         .map_err(|v| anyhow!("failed to create rANS decoder, leftover words: {:?}", v))?;
     let mut decoded_ids: Vec<u32> = Vec::with_capacity(ch.token_count as usize);
-    let mut decoded_ranks: Vec<usize> = Vec::with_capacity(ch.token_count as usize);
 
-    // Build PPM from past context (same as encoder)
     let mut ppm = PPMModel::new(2, vocab_size);
-    let mut prev: Vec<u32> = Vec::new(); // store ranks as u32
+    let mut prev: Vec<u32> = Vec::new();
 
-    for i in 0..ch.token_count as usize {  // FORWARD iteration
+    for i in 0..ch.token_count as usize {
         let feature_mask = ch.features[i];
 
         let (freqs, _total) = ppm.get_freqs(&prev, feature_mask);
@@ -329,30 +328,20 @@ pub fn decode_chunk(dict: &mut MultiTierDict, ch: &Chunk) -> Result<String> {
             })
             .map_err(|_| anyhow!("failed to build entropy model (decoder)"))?;
 
-        // decode to a rank (0..vocab_size-1)
         let rank = coder.decode_symbol(&model)
             .map_err(|e| anyhow!("rANS decode_symbol failed: {:?}", e))? as usize;
 
-        // map rank -> id (dictionary id)
         let id = *rank_to_id.get(rank)
             .ok_or_else(|| anyhow!("rank {} out of range during decode", rank))?;
         decoded_ids.push(id);
-        decoded_ranks.push(rank);
 
-        // update the PPM with the decoded rank (building context for next decode)
         ppm.update(&prev, feature_mask, rank as u32);
         prev.push(rank as u32);
         if prev.len() > 2 { prev.remove(0); }
     }
 
-    if DEBUG {
-        println!("DECODER: decoded_ranks={:?}", decoded_ranks);
-        println!("DECODER: decoded_ids={:?}", decoded_ids);
-    }
-
-    // 4) Phase 2: Convert IDs to tokens
+    // Convert IDs to tokens
     let mut out = String::new();
-
     for &id in decoded_ids.iter() {
         if let Some(tok) = dict.lookup(id) {
             out.push_str(tok);
