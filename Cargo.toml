@@ -1,6 +1,6 @@
 [package]
 name = "indic_ans_compressor"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [lib]
@@ -12,5 +12,25 @@ unicode-general-category = "0.3"
 constriction = "0.4"
 wasm-bindgen = "0.2"
 anyhow = "1.0"
-# For the CLI example:
 clap = { version = "4.2", features = ["derive"] }
+
+# For neural network (lightweight implementation)
+ndarray = { version = "0.15", default-features = false }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# For lossy compression phonetic rules
+regex = "1.10"
+lazy_static = "1.4"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.release.package."*"]
+opt-level = 3
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-Oz", "--enable-bulk-memory", "--enable-mutable-globals", "--enable-nontrapping-float-to-int"]
