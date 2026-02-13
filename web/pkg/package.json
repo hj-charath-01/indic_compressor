@@ -1,7 +1,7 @@
 {
   "name": "indic_ans_compressor",
   "type": "module",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "files": [
     "indic_ans_compressor_bg.wasm",
     "indic_ans_compressor.js",

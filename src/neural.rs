@@ -1,6 +1,5 @@
-// src/neural.rs - Lightweight Neural Predictor for Indic Text Compression
-// Patent-worthy innovation: Script-aware neural embeddings for compression
-
+///Lightweight Neural Predictor for Indic Text Compression
+use ndarray::{Array1, Array2};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -111,7 +110,7 @@ impl NeuralPredictor {
         }
         
         // Add feature bits as floats
-        for i in 0..8 {
+        for i in 0..8 { 
             input.push(if (features >> i) & 1 == 1 { 1.0 } else { 0.0 });
         }
         
@@ -155,79 +154,6 @@ impl NeuralPredictor {
         }
     }
     
-    /// Predict next token given context (for hybrid compression)
-    /// Returns probabilities for each possible token
-    pub fn predict_token(&mut self, context: &[u32], _target: u32) -> Vec<(u32, f32)> {
-        // Extract features from context
-        let features = self.extract_features(context);
-        
-        // Get embedding for context tokens
-        let context_embed = if !context.is_empty() {
-            let last_token = context[context.len() - 1];
-            self.embeddings.get(&last_token)
-                .cloned()
-                .unwrap_or_else(|| vec![0.0; self.embedding_dim])
-        } else {
-            vec![0.0; self.embedding_dim]
-        };
-        
-        // Combine context embedding and features
-        let mut input = context_embed;
-        input.extend(features);
-        
-        // Forward pass
-        let output = self.forward(&input);
-        
-        // Convert to top-K tokens with probabilities
-        let mut token_probs: Vec<(u32, f32)> = output.iter()
-            .enumerate()
-            .map(|(idx, &prob)| (idx as u32, prob))
-            .collect();
-        
-        // Sort by probability
-        token_probs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        
-        // Return top 32 predictions
-        token_probs.truncate(32);
-        token_probs
-    }
-    
-    /// Observe a token for online learning (optional)
-    pub fn observe(&mut self, _context: &[u32], _token: u32) {
-        // Optional: Implement online learning here
-        // For now, we use the pretrained model without updates
-    }
-    
-    /// Extract contextual features
-    fn extract_features(&self, context: &[u32]) -> Vec<f32> {
-        let mut features = vec![0.0; 8];
-        
-        if context.is_empty() {
-            return features;
-        }
-        
-        // Feature 1-2: Context length indicators
-        features[0] = if context.len() >= 1 { 1.0 } else { 0.0 };
-        features[1] = if context.len() >= 2 { 1.0 } else { 0.0 };
-        
-        // Feature 3-4: Token range indicators
-        let last_token = context[context.len() - 1];
-        features[2] = if last_token < 128 { 1.0 } else { 0.0 }; // ASCII range
-        features[3] = if last_token >= 2304 && last_token < 2432 { 1.0 } else { 0.0 }; // Devanagari
-        
-        // Feature 5-6: Repetition indicators
-        if context.len() >= 2 {
-            let prev = context[context.len() - 2];
-            features[4] = if last_token == prev { 1.0 } else { 0.0 };
-        }
-        
-        // Feature 7-8: Position in sequence (normalized)
-        features[6] = (context.len() as f32) / 100.0;
-        features[7] = (last_token % 10) as f32 / 10.0; // token pattern
-        
-        features
-    }
-    
     /// Train on a batch of examples (simple gradient descent)
     /// This would be used during model training phase (not in WASM)
     #[allow(dead_code)]
@@ -239,8 +165,8 @@ impl NeuralPredictor {
         let batch_size = examples.len() as f32;
         
         // Accumulate gradients
-        let _grad_w1 = vec![0.0; self.w1.len()];
-        let _grad_b1 = vec![0.0; self.b1.len()];
+        let mut grad_w1 = vec![0.0; self.w1.len()];
+        let mut grad_b1 = vec![0.0; self.b1.len()];
         let mut grad_w2 = vec![0.0; self.w2.len()];
         let mut grad_b2 = vec![0.0; self.b2.len()];
         

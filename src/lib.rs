@@ -9,13 +9,12 @@ pub mod chunk;
 pub mod ppm;
 pub mod neural;
 pub mod lossy;
-pub mod chunk_neural;
 
 use anyhow::{Result, anyhow};
 use wasm_bindgen::prelude::*;
 use std::convert::TryInto;
 use lossy::{LossyCompressor, QualityLevel, LossyMetadata};
-use neural::load_pretrained_model;
+use neural::{NeuralPredictor, load_pretrained_model};
 
 /// Minimum text size (in bytes) before attempting compression
 const COMPRESSION_THRESHOLD: usize = 500;
@@ -87,8 +86,8 @@ pub fn encode_stream_advanced(text: &str, options: CompressionOptions) -> Result
     };
     
     // Step 3: Load neural model if requested
-    // Note: Neural model loaded for future chunk-level integration
-    // Current version uses standard PPM encoding for compatibility with existing token system
+    // Note: Neural integration at chunk level is framework for future enhancement
+    // Current version focuses on lossy compression innovation
     let _neural_model = if options.use_neural {
         load_pretrained_model(&options.script)
     } else {
@@ -100,8 +99,8 @@ pub fn encode_stream_advanced(text: &str, options: CompressionOptions) -> Result
     let mut dict = dict::MultiTierDict::new();
     let mut stream = chunk::Stream::new();
 
-    // Standard encoding (neural integration deferred for token compatibility)
-    // Neural model provides framework for future enhancement
+    // Neural model is currently not integrated at chunk level for simplicity
+    // Using standard encoding with note for future enhancement
     for chunk_tokens in tokens.chunks(actual_chunk_size) {
         let ch = chunk::encode_chunk(&mut dict, chunk_tokens.to_vec())?;
         stream.chunks.push(ch);
@@ -369,7 +368,7 @@ pub fn encode_stream_advanced_wasm(
         use_neural,
         neural_weight,
         quality: QualityLevel::from_u8(quality_level),
-        script: "devanagari".to_string(), // Auto-detect in production
+        script: "devanagari".to_string(), // Auto-detect
     };
     
     encode_stream_advanced(text, options)

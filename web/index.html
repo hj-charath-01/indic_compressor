@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Indic Text Compressor - Enhanced Edition</title>
+  <title>Indic Text Compressor</title>
   <link rel="stylesheet" href="./styles.css">
   <style>
     /* Additional styles for enhanced features */
@@ -87,16 +87,15 @@
     <header class="header">
       <h1>
         Indic Text Compressor
-        <span class="patent-badge">🧠 PATENT-WORTHY</span>
       </h1>
       <p class="subtitle">Advanced Lossy Compression for Indic Scripts</p>
-      <p id="wasmStatus" style="margin-top: 10px; color: #ffc107; font-size: 0.9rem;">⏳ Loading WASM...</p>
+      <p id="wasmStatus" style="margin-top: 10px; color: #ffc107; font-size: 0.9rem;">Loading WASM...</p>
     </header>
 
     <!-- Feature Highlights -->
     <div class="feature-card">
-      <h3>🚀 Novel Innovation</h3>
-      <p><strong>Script-Aware Lossy Compression:</strong> Phonetically-equivalent normalization preserves meaning while reducing size by 5-20%. Patent-pending technology.</p>
+      <h3>Novel Innovation</h3>
+      <p><strong>Script-Aware Lossy Compression:</strong> Phonetically-equivalent normalization preserves meaning while reducing size by 5-20%.</p>
     </div>
 
     <!-- Main Input Section -->
@@ -124,7 +123,7 @@
 
     <!-- Lossy Compression Settings -->
     <section class="panel">
-      <h2>📉 Lossy Compression Quality</h2>
+      <h2>Lossy Compression Quality</h2>
       
       <div class="setting-group">
         <label class="label">
@@ -161,39 +160,9 @@
       </div>
     </section>
 
-    <!-- Neural-Hybrid Compression -->
-    <section class="panel">
-      <h2>🧠 Neural-Hybrid Compression</h2>
-      <div class="feature-card" style="margin-bottom: 16px;">
-        <h3>Patent-Worthy Innovation</h3>
-        <p>Combines lightweight neural network with PPM for 5-15% better compression!</p>
-      </div>
-      
-      <div class="setting-group">
-        <label class="checkbox-label">
-          <input type="checkbox" id="useNeural">
-          Enable Neural Predictor
-        </label>
-        <p class="help-text" style="margin-top: 4px; font-size: 0.85rem;">
-          Uses a tiny (~50KB) neural network to improve token prediction
-        </p>
-      </div>
-
-      <div id="neuralWeightGroup" class="setting-group" style="display: none; margin-top: 16px;">
-        <label for="neuralWeight" class="label">
-          Neural Weight (α)
-          <span class="help-icon" title="0% = Pure PPM, 100% = Pure Neural. Recommended: 30-50%">ℹ️</span>
-        </label>
-        <div class="input-with-display">
-          <input id="neuralWeight" type="range" value="30" min="0" max="100" step="5" class="slider">
-          <span id="neuralWeightDisplay" class="value-display">30%</span>
-        </div>
-      </div>
-    </section>
-
     <!-- Standard Compression Settings -->
     <section class="panel">
-      <h2>⚙️ Compression Settings</h2>
+      <h2>Compression Settings</h2>
       
       <div class="setting-group">
         <label for="chunkSize" class="label">
@@ -208,7 +177,7 @@
 
       <div class="button-group">
         <button id="btnEncode" class="btn btn-primary" disabled>
-          🗜️ Compress Text
+          Compress Text
         </button>
         <button id="btnClear" class="btn btn-secondary">
           Clear
@@ -237,18 +206,14 @@
           <div class="result-label">Number of Chunks</div>
           <div id="chunkCount" class="result-value">—</div>
         </div>
-        <div class="result-card">
-          <div class="result-label">Method Used</div>
-          <div id="methodUsed" class="result-value">—</div>
-        </div>
       </div>
 
       <div class="button-group">
         <button id="btnDownload" class="btn btn-primary">
-          💾 Download .bin
+          Download .bin
         </button>
         <button id="btnDecodeAll" class="btn btn-secondary">
-          ✓ Decompress & Verify
+          Decompress & Verify
         </button>
       </div>
     </section>
@@ -343,8 +308,6 @@
     let latestStreamBytes = null;
     let latestOriginalText = '';
     let currentQuality = 0;
-    let useNeural = false;
-    let neuralWeight = 0.30;
 
     function updateWasmStatus(status, message) {
       const statusEl = document.getElementById('wasmStatus');
@@ -352,14 +315,14 @@
       
       if (statusEl) {
         if (status === 'loading') {
-          statusEl.textContent = '⏳ ' + message;
+          statusEl.textContent = message;
           statusEl.style.color = '#ffc107';
         } else if (status === 'ready') {
-          statusEl.textContent = '✅ ' + message;
+          statusEl.textContent = message;
           statusEl.style.color = '#198754';
           if (btnEncode) btnEncode.disabled = false;
         } else if (status === 'error') {
-          statusEl.textContent = '❌ ' + message;
+          statusEl.textContent = message;
           statusEl.style.color = '#dc3545';
         }
       }
@@ -509,32 +472,6 @@
         });
       });
 
-      // Neural toggle
-      const neuralCheckbox = document.getElementById('useNeural');
-      const neuralWeightGroup = document.getElementById('neuralWeightGroup');
-      if (neuralCheckbox && neuralWeightGroup) {
-        neuralCheckbox.addEventListener('change', () => {
-          useNeural = neuralCheckbox.checked;
-          neuralWeightGroup.style.display = useNeural ? 'block' : 'none';
-          if (useNeural) {
-            showToast('🧠 Neural predictor enabled - compression will improve!', 'success');
-          }
-        });
-      }
-
-      // Neural weight slider
-      const neuralWeightSlider = document.getElementById('neuralWeight');
-      const neuralWeightDisplay = document.getElementById('neuralWeightDisplay');
-      if (neuralWeightSlider && neuralWeightDisplay) {
-        neuralWeightDisplay.textContent = neuralWeightSlider.value + '%';
-        neuralWeightSlider.addEventListener('input', () => {
-          neuralWeight = parseInt(neuralWeightSlider.value) / 100.0;
-          neuralWeightDisplay.textContent = neuralWeightSlider.value + '%';
-          updateSliderFill(neuralWeightSlider);
-        });
-        updateSliderFill(neuralWeightSlider);
-      }
-
       // Text input
       const inputText = document.getElementById('inputText');
       if (inputText) {
@@ -571,9 +508,9 @@
           const text = document.getElementById('decodedOutput')?.textContent || '';
           try {
             await navigator.clipboard.writeText(text);
-            showToast('✓ Copied to clipboard', 'success');
+            showToast('Copied to clipboard', 'success');
           } catch (e) {
-            showToast('❌ Failed to copy', 'error');
+            showToast('Failed to copy', 'error');
           }
         });
       }
@@ -608,7 +545,7 @@
             const el = document.getElementById(id);
             if (el) el.style.display = 'none';
           });
-          showToast('✓ Cleared', 'info');
+          showToast('Cleared', 'info');
         });
       }
 
@@ -664,7 +601,7 @@
         
         showToast(`✓ Loaded ${file.name}`, 'success');
       } catch (e) {
-        showToast(`❌ Failed to load file: ${e}`, 'error');
+        showToast(`Failed to load file: ${e}`, 'error');
       }
     }
 
@@ -691,14 +628,14 @@
           btn.textContent = 'Compressing...';
         }
 
-        // Use advanced encoding with lossy and neural support
+        // Use advanced encoding with lossy support
         let encoded;
-        if (useNeural || currentQuality > 0) {
+        if (currentQuality > 0) {
           encoded = wasmModule.encode_stream_advanced_wasm(
             text,
             chunkSize,
-            useNeural,
-            neuralWeight,
+            false,  // neural disabled
+            0.0,
             currentQuality
           );
         } else {
@@ -722,31 +659,14 @@
         if (compressedSize) compressedSize.textContent = `${compressedBytes.toLocaleString()} bytes`;
         if (chunkCount) chunkCount.textContent = chunks.toLocaleString();
         
-        if (compressionRatio) {
-          compressionRatio.textContent = `${ratio}% (saved ${savings.toLocaleString()} bytes)`;
-          showToast(`✓ Compressed to ${ratio}%`, 'success');
+        if (savings > 0) {
+          if (compressionRatio) {
+            compressionRatio.textContent = `${ratio}% (saved ${savings.toLocaleString()} bytes)`;
+          }
+          showToast(`Compressed to ${ratio}%`, 'success');
         } else {
           if (compressionRatio) compressionRatio.textContent = `${ratio}%`;
-          showToast(`⚠ Result is ${ratio}%`, 'warning');
-        }
-
-        // Show method used
-        let method = 'PPM + rANS';
-        if (useNeural) {
-          method = `Neural-Hybrid (α=${Math.round(neuralWeight*100)}%)`;
-        }
-        if (currentQuality > 0) {
-          const qualityNames = ['Lossless', 'Very High', 'High', 'Medium', 'Low'];
-          method += ` + Lossy (${qualityNames[currentQuality]})`;
-        }
-        
-        const methodUsed = document.getElementById('methodUsed');
-        if (methodUsed) {
-          methodUsed.textContent = method;
-          if (useNeural) {
-            methodUsed.style.color = '#667eea';
-            methodUsed.style.fontWeight = '700';
-          }
+          showToast(`Result is ${ratio}%`, 'warning');
         }
 
         // Update decode slider
@@ -775,7 +695,7 @@
             a.download = 'indic_compressed.bin';
             a.click();
             URL.revokeObjectURL(url);
-            showToast('✓ Downloaded', 'success');
+            showToast('Downloaded', 'success');
           };
         }
 
@@ -786,11 +706,11 @@
 
       } catch (e) {
         console.error('Encode error:', e);
-        showToast(`❌ Error: ${e.message || e}`, 'error');
+        showToast(`Error: ${e.message || e}`, 'error');
         const btn = document.getElementById('btnEncode');
         if (btn) {
           btn.disabled = false;
-          btn.textContent = '🗜️ Compress Text';
+          btn.textContent = 'Compress Text';
         }
       }
     }
@@ -819,20 +739,20 @@
 
         if (latestOriginalText && outputStatus) {
           if (currentQuality === 0 && decoded === latestOriginalText) {
-            outputStatus.textContent = '✓ Perfect match';
+            outputStatus.textContent = 'Perfect match';
             outputStatus.className = 'status-badge success';
             showToast('✓ Perfect decompression!', 'success');
           } else if (currentQuality > 0) {
-            outputStatus.textContent = '✓ Lossy decompression complete';
+            outputStatus.textContent = 'Lossy decompression complete';
             outputStatus.className = 'status-badge info';
             showToast('✓ Lossy decompression complete', 'success');
           } else {
-            outputStatus.textContent = '⚠ Mismatch';
+            outputStatus.textContent = 'Mismatch';
             outputStatus.className = 'status-badge warning';
             showToast('⚠ Decoded text differs', 'warning');
           }
         } else if (outputStatus) {
-          outputStatus.textContent = '✓ Decompressed';
+          outputStatus.textContent = 'Decompressed';
           outputStatus.className = 'status-badge info';
           showToast('✓ Decompression complete', 'success');
         }
@@ -844,7 +764,7 @@
 
       } catch (e) {
         console.error('Decode error:', e);
-        showToast(`❌ Decode error: ${e.message || e}`, 'error');
+        showToast(`Decode error: ${e.message || e}`, 'error');
         const btn = document.getElementById('btnDecodeAll') || document.getElementById('btnDecodeUpload');
         if (btn) {
           btn.disabled = false;
@@ -890,16 +810,16 @@
 
         if (btn) {
           btn.disabled = false;
-          btn.textContent = '▶ Decode Partial';
+          btn.textContent = 'Decode Partial';
         }
 
       } catch (e) {
         console.error('Decode prefix error:', e);
-        showToast(`❌ Partial decode failed: ${e.message || e}`, 'error');
+        showToast(`Partial decode failed: ${e.message || e}`, 'error');
         const btn = document.getElementById('btnDecodePrefix');
         if (btn) {
           btn.disabled = false;
-          btn.textContent = '▶ Decode Partial';
+          btn.textContent = 'Decode Partial';
         }
       }
     }
@@ -920,14 +840,14 @@
         
         console.log('WASM initialized successfully');
         updateWasmStatus('ready', 'Ready to compress!');
-        showToast('✅ Ready to compress', 'success');
+        showToast('Ready to compress', 'success');
         
         updateStats();
 
       } catch (err) {
         console.error('WASM init failed:', err);
         updateWasmStatus('error', 'Failed to load WASM');
-        showToast('❌ WASM failed to load. Build with: wasm-pack build --target web --out-dir web/pkg', 'error');
+        showToast('WASM failed to load. Build with: wasm-pack build --target web --out-dir web/pkg', 'error');
       }
     }
 
