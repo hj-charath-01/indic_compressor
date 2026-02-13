@@ -5,7 +5,11 @@ export function decode_full_wasm(data: Uint8Array): string;
 
 export function decode_prefix_wasm(data: Uint8Array, upto: number): string;
 
+export function encode_stream_advanced_wasm(text: string, chunk_size: number, use_neural: boolean, neural_weight: number, quality_level: number): Uint8Array;
+
 export function encode_stream_wasm(text: string, chunk_size: number): Uint8Array;
+
+export function estimate_lossy_savings(text: string, quality_level: number): string;
 
 export function get_compression_info(text: string, chunk_size: number): string;
 
@@ -13,16 +17,16 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
   readonly memory: WebAssembly.Memory;
-  readonly decode_full_wasm: (a: number, b: number) => [number, number, number, number];
-  readonly decode_prefix_wasm: (a: number, b: number, c: number) => [number, number, number, number];
-  readonly encode_stream_wasm: (a: number, b: number, c: number) => [number, number, number, number];
-  readonly get_compression_info: (a: number, b: number, c: number) => [number, number, number, number];
-  readonly __wbindgen_externrefs: WebAssembly.Table;
-  readonly __wbindgen_malloc: (a: number, b: number) => number;
-  readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
-  readonly __externref_table_dealloc: (a: number) => void;
-  readonly __wbindgen_free: (a: number, b: number, c: number) => void;
-  readonly __wbindgen_start: () => void;
+  readonly decode_full_wasm: (a: number, b: number, c: number) => void;
+  readonly decode_prefix_wasm: (a: number, b: number, c: number, d: number) => void;
+  readonly encode_stream_advanced_wasm: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+  readonly encode_stream_wasm: (a: number, b: number, c: number, d: number) => void;
+  readonly estimate_lossy_savings: (a: number, b: number, c: number, d: number) => void;
+  readonly get_compression_info: (a: number, b: number, c: number, d: number) => void;
+  readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
+  readonly __wbindgen_export: (a: number, b: number) => number;
+  readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
+  readonly __wbindgen_export3: (a: number, b: number, c: number) => void;
 }
 
 export type SyncInitInput = BufferSource | WebAssembly.Module;
