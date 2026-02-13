@@ -10,7 +10,7 @@ use anyhow::Result;
 /// This is the patent-worthy innovation: combines PPM statistical model
 /// with lightweight neural network for improved token prediction
 pub fn encode_chunk_neural(
-    dict: &mut MultiTierDict,
+    _dict: &mut MultiTierDict,
     tokens: Vec<u32>,
     neural: &mut NeuralPredictor,
     alpha: f32, // Hybrid weight: 0.0 = pure PPM, 1.0 = pure neural
