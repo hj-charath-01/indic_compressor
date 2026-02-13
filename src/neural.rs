@@ -268,7 +268,7 @@ impl NeuralPredictor {
         // Accumulate gradients - MUST BE MUTABLE
         let _grad_w1 = vec![0.0; self.w1.len()];
         let _grad_b1 = vec![0.0; self.b1.len()];
-        let mut grad_w2 = vec![0.0; self.w2.len()];
+        let grad_w2 = vec![0.0; self.w2.len()];
         let mut grad_b2 = vec![0.0; self.b2.len()];
         
         for (context, features, target) in examples {

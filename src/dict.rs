@@ -1,56 +1,58 @@
+// src/dict.rs - Multi-tier dictionary for compression
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Multi-tier dictionary
-/// - global list could be preloaded (not used in this minimal impl, but structure supports it)
+/// Multi-tier dictionary for token compression
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MultiTierDict {
-    pub global: Vec<String>,      // optional pre-seeded global tokens
-    pub map: HashMap<String, u32>,// token -> id
-    pub rev: HashMap<u32, String>,// id -> token
-    pub next: u32,
+    /// Token to text mapping
+    tokens: HashMap<u32, String>,
+    /// Next token ID
+    next_id: u32,
 }
 
 impl MultiTierDict {
     pub fn new() -> Self {
-        let global: Vec<String> = Vec::new();
-        let mut map = HashMap::new();
-        let mut rev = HashMap::new();
-        // If you want seed global tokens: push here and set map/rev accordingly
-        for (i, tok) in global.iter().enumerate() {
-            map.insert(tok.clone(), i as u32);
-            rev.insert(i as u32, tok.clone());
-        }
-        let next = global.len() as u32;
-        Self { global, map, rev, next }
-    }
-
-    /// Get existing id or insert new id for token. Returns (id, was_new).
-    pub fn get_or_insert(&mut self, token: &str) -> (u32, bool) {
-        if let Some(&id) = self.map.get(token) {
-            (id, false)
-        } else {
-            let id = self.next;
-            self.map.insert(token.to_string(), id);
-            self.rev.insert(id, token.to_string());
-            self.next += 1;
-            (id, true)
+        Self {
+            tokens: HashMap::new(),
+            next_id: 1,
         }
     }
-
-    /// Lookup token by id (may return None for unknown)
-    pub fn lookup(&self, id: u32) -> Option<&String> {
-        self.rev.get(&id)
+    
+    /// Observe a token (for frequency tracking)
+    pub fn observe(&mut self, _token_id: u32) {
+        // Update statistics (simplified)
     }
-
-    /// Current symbol-space size (next id)
-    pub fn next_id(&self) -> usize {
-        self.next as usize
+    
+    /// Decode a token ID back to text
+    pub fn decode_token(&self, token_id: u32) -> Option<String> {
+        self.tokens.get(&token_id).cloned()
     }
+    
+    /// Add a new token
+    pub fn add_token(&mut self, text: String) -> u32 {
+        let id = self.next_id;
+        self.tokens.insert(id, text);
+        self.next_id += 1;
+        id
+    }
+}
 
-    /// Add a delta entry (id -> token) — used by decoder when applying deltas
-    pub fn add_with_id(&mut self, id: u32, token: &str) {
-        // ensure `next` moves forward if id is larger
-        self.map.insert(token.to_string(), id);
-        self.rev.insert(id, token.to_string());
-        if id >= self.next { self.next = id + 1; }
+impl Default for MultiTierDict {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_dict() {
+        let mut dict = MultiTierDict::new();
+        let id = dict.add_token("hello".to_string());
+        
+        assert_eq!(dict.decode_token(id), Some("hello".to_string()));
     }
 }
