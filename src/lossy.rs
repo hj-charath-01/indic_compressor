@@ -44,6 +44,12 @@ pub struct LossyCompressor {
     devanagari_rules: HashMap<String, String>,
     tamil_rules: HashMap<String, String>,
     telugu_rules: HashMap<String, String>,
+    bengali_rules: HashMap<String, String>,
+    gujarati_rules: HashMap<String, String>,
+    malayalam_rules: HashMap<String, String>,
+    kannada_rules: HashMap<String, String>,
+    punjabi_rules: HashMap<String, String>,
+    odia_rules: HashMap<String, String>,
 }
 
 impl LossyCompressor {
@@ -53,6 +59,12 @@ impl LossyCompressor {
             devanagari_rules: HashMap::new(),
             tamil_rules: HashMap::new(),
             telugu_rules: HashMap::new(),
+            bengali_rules: HashMap::new(),
+            gujarati_rules: HashMap::new(),
+            malayalam_rules: HashMap::new(),
+            kannada_rules: HashMap::new(),
+            punjabi_rules: HashMap::new(),
+            odia_rules: HashMap::new(),
         };
         
         compressor.initialize_rules();
@@ -61,14 +73,16 @@ impl LossyCompressor {
     
     /// Initialize phonetic normalization rules
     fn initialize_rules(&mut self) {
-        // Devanagari rules
+        // All Indic script rules
         self.add_devanagari_rules();
-        
-        // Tamil rules
         self.add_tamil_rules();
-        
-        // Telugu rules
         self.add_telugu_rules();
+        self.add_bengali_rules();
+        self.add_gujarati_rules();
+        self.add_malayalam_rules();
+        self.add_kannada_rules();
+        self.add_punjabi_rules();
+        self.add_odia_rules();
     }
     
     /// Devanagari-specific normalization rules
@@ -150,6 +164,58 @@ impl LossyCompressor {
         }
     }
     
+    /// Bengali-specific normalization rules
+    fn add_bengali_rules(&mut self) {
+        if self.quality >= QualityLevel::VeryHigh {
+            // Bengali: Normalize archaic/rare characters
+            // Chandrabindu variants
+            self.bengali_rules.insert("ঁ".to_string(), "ং".to_string()); // Chandrabindu → Anusvara
+            
+            // Rare vowel signs
+            self.bengali_rules.insert("ৄ".to_string(), "ৃ".to_string()); // Vocalic RR → R
+        }
+        
+        if self.quality >= QualityLevel::High {
+            // Khanda-ta normalization (common pattern)
+            self.bengali_rules.insert("ৎ".to_string(), "ত্".to_string()); // Khanda-ta → halant-ta
+            
+            // য-ফলা simplification (very common in Bengali)
+            self.bengali_rules.insert("্য".to_string(), "য".to_string()); // Y-phala reduction
+            
+            // Ref (র-ফলা) normalization for common patterns
+            self.bengali_rules.insert("্র".to_string(), "র".to_string()); // R-phala simplification
+            
+            // Double consonants → single
+            self.bengali_rules.insert("ক্ক".to_string(), "ক".to_string());
+            self.bengali_rules.insert("ত্ত".to_string(), "ত".to_string());
+            self.bengali_rules.insert("ন্ন".to_string(), "ন".to_string());
+            self.bengali_rules.insert("ম্ম".to_string(), "ম".to_string());
+        }
+        
+        if self.quality >= QualityLevel::Medium {
+            // More aggressive consonant cluster simplification
+            self.bengali_rules.insert("ক্ষ".to_string(), "খ".to_string()); // ksh → kh
+            self.bengali_rules.insert("জ্ঞ".to_string(), "গ্য".to_string()); // gy → simple gy
+            
+            // More doubles
+            self.bengali_rules.insert("ল্ল".to_string(), "ল".to_string());
+            self.bengali_rules.insert("প্প".to_string(), "প".to_string());
+            self.bengali_rules.insert("স্স".to_string(), "স".to_string());
+            
+            // Hasanta (halant) reduction in common cases
+            self.bengali_rules.insert("্".to_string(), "".to_string()); // Remove isolated halants
+        }
+        
+        if self.quality >= QualityLevel::Low {
+            // Very aggressive: vowel length normalization
+            self.bengali_rules.insert("া".to_string(), "".to_string()); // Long aa → nothing
+            self.bengali_rules.insert("ী".to_string(), "ি".to_string()); // Long ii → short i
+            self.bengali_rules.insert("ূ".to_string(), "ু".to_string()); // Long uu → short u
+            self.bengali_rules.insert("ো".to_string(), "".to_string()); // O → nothing
+            self.bengali_rules.insert("ৌ".to_string(), "".to_string()); // AU → nothing
+        }
+    }
+    
     /// Telugu-specific normalization rules
     fn add_telugu_rules(&mut self) {
         if self.quality >= QualityLevel::VeryHigh {
@@ -160,6 +226,185 @@ impl LossyCompressor {
         if self.quality >= QualityLevel::High {
             // Conjunct normalization
             self.telugu_rules.insert("క్ష".to_string(), "క్స".to_string());
+            
+            // Double consonants
+            self.telugu_rules.insert("క్క".to_string(), "క".to_string());
+            self.telugu_rules.insert("ట్ట".to_string(), "ట".to_string());
+            self.telugu_rules.insert("న్న".to_string(), "న".to_string());
+        }
+        
+        if self.quality >= QualityLevel::Medium {
+            self.telugu_rules.insert("ల్ల".to_string(), "ల".to_string());
+            self.telugu_rules.insert("ప్ప".to_string(), "ప".to_string());
+            self.telugu_rules.insert("మ్మ".to_string(), "మ".to_string());
+        }
+        
+        if self.quality >= QualityLevel::Low {
+            self.telugu_rules.insert("ా".to_string(), "".to_string());
+            self.telugu_rules.insert("ీ".to_string(), "ి".to_string());
+            self.telugu_rules.insert("ూ".to_string(), "ు".to_string());
+        }
+    }
+    
+    /// Gujarati-specific normalization rules
+    fn add_gujarati_rules(&mut self) {
+        if self.quality >= QualityLevel::VeryHigh {
+            // Gujarati: Normalize archaic/rare forms
+            self.gujarati_rules.insert("ઁ".to_string(), "ં".to_string());
+        }
+        
+        if self.quality >= QualityLevel::High {
+            // Double consonants → single
+            self.gujarati_rules.insert("ક્ક".to_string(), "ક".to_string());
+            self.gujarati_rules.insert("ત્ત".to_string(), "ત".to_string());
+            self.gujarati_rules.insert("ન્ન".to_string(), "ન".to_string());
+            self.gujarati_rules.insert("મ્મ".to_string(), "મ".to_string());
+            
+            // Common conjuncts
+            self.gujarati_rules.insert("ક્ષ".to_string(), "ખ".to_string());
+            self.gujarati_rules.insert("જ્ઞ".to_string(), "ગ્ય".to_string());
+        }
+        
+        if self.quality >= QualityLevel::Medium {
+            self.gujarati_rules.insert("લ્લ".to_string(), "લ".to_string());
+            self.gujarati_rules.insert("પ્પ".to_string(), "પ".to_string());
+            self.gujarati_rules.insert("સ્સ".to_string(), "સ".to_string());
+        }
+        
+        if self.quality >= QualityLevel::Low {
+            self.gujarati_rules.insert("ા".to_string(), "".to_string());
+            self.gujarati_rules.insert("ી".to_string(), "િ".to_string());
+            self.gujarati_rules.insert("ૂ".to_string(), "ુ".to_string());
+        }
+    }
+    
+    /// Malayalam-specific normalization rules
+    fn add_malayalam_rules(&mut self) {
+        if self.quality >= QualityLevel::VeryHigh {
+            // Malayalam: Archaic characters
+            self.malayalam_rules.insert("ഀ".to_string(), "ം".to_string());
+        }
+        
+        if self.quality >= QualityLevel::High {
+            // Chillu letters → base + virama
+            self.malayalam_rules.insert("ൺ".to_string(), "ണ്".to_string());
+            self.malayalam_rules.insert("ൻ".to_string(), "ന്".to_string());
+            self.malayalam_rules.insert("ർ".to_string(), "ര്".to_string());
+            self.malayalam_rules.insert("ൽ".to_string(), "ല്".to_string());
+            self.malayalam_rules.insert("ൾ".to_string(), "ള്".to_string());
+            
+            // Double consonants
+            self.malayalam_rules.insert("ക്ക".to_string(), "ക".to_string());
+            self.malayalam_rules.insert("ത്ത".to_string(), "ത".to_string());
+            self.malayalam_rules.insert("ന്ന".to_string(), "ന".to_string());
+        }
+        
+        if self.quality >= QualityLevel::Medium {
+            self.malayalam_rules.insert("ല്ല".to_string(), "ല".to_string());
+            self.malayalam_rules.insert("പ്പ".to_string(), "പ".to_string());
+            self.malayalam_rules.insert("മ്മ".to_string(), "മ".to_string());
+        }
+        
+        if self.quality >= QualityLevel::Low {
+            self.malayalam_rules.insert("ാ".to_string(), "".to_string());
+            self.malayalam_rules.insert("ീ".to_string(), "ി".to_string());
+            self.malayalam_rules.insert("ൂ".to_string(), "ു".to_string());
+        }
+    }
+    
+    /// Kannada-specific normalization rules
+    fn add_kannada_rules(&mut self) {
+        if self.quality >= QualityLevel::VeryHigh {
+            // Kannada: Rare vocalic variants
+            self.kannada_rules.insert("ೠ".to_string(), "ೃ".to_string());
+        }
+        
+        if self.quality >= QualityLevel::High {
+            // Double consonants
+            self.kannada_rules.insert("ಕ್ಕ".to_string(), "ಕ".to_string());
+            self.kannada_rules.insert("ತ್ತ".to_string(), "ತ".to_string());
+            self.kannada_rules.insert("ನ್ನ".to_string(), "ನ".to_string());
+            self.kannada_rules.insert("ಪ್ಪ".to_string(), "ಪ".to_string());
+            
+            // Common conjuncts
+            self.kannada_rules.insert("ಕ್ಷ".to_string(), "ಕ್ಸ".to_string());
+            self.kannada_rules.insert("ಜ್ಞ".to_string(), "ಗ್ಯ".to_string());
+        }
+        
+        if self.quality >= QualityLevel::Medium {
+            self.kannada_rules.insert("ಲ್ಲ".to_string(), "ಲ".to_string());
+            self.kannada_rules.insert("ಮ್ಮ".to_string(), "ಮ".to_string());
+            self.kannada_rules.insert("ಸ್ಸ".to_string(), "ಸ".to_string());
+        }
+        
+        if self.quality >= QualityLevel::Low {
+            self.kannada_rules.insert("ಾ".to_string(), "".to_string());
+            self.kannada_rules.insert("ೀ".to_string(), "ಿ".to_string());
+            self.kannada_rules.insert("ೂ".to_string(), "ು".to_string());
+        }
+    }
+    
+    /// Punjabi (Gurmukhi) specific normalization rules
+    fn add_punjabi_rules(&mut self) {
+        if self.quality >= QualityLevel::VeryHigh {
+            // Punjabi: Tippi/Bindi variants
+            self.punjabi_rules.insert("ੰ".to_string(), "ਂ".to_string());
+        }
+        
+        if self.quality >= QualityLevel::High {
+            // Double consonants (gemination)
+            self.punjabi_rules.insert("ੱਕ".to_string(), "ਕ".to_string());
+            self.punjabi_rules.insert("ੱਤ".to_string(), "ਤ".to_string());
+            self.punjabi_rules.insert("ੱਪ".to_string(), "ਪ".to_string());
+            self.punjabi_rules.insert("ੱਮ".to_string(), "ਮ".to_string());
+            
+            // Subjoined forms
+            self.punjabi_rules.insert("੍ਰ".to_string(), "ਰ".to_string());
+            self.punjabi_rules.insert("੍ਵ".to_string(), "ਵ".to_string());
+        }
+        
+        if self.quality >= QualityLevel::Medium {
+            self.punjabi_rules.insert("ੱਲ".to_string(), "ਲ".to_string());
+            self.punjabi_rules.insert("ੱਨ".to_string(), "ਨ".to_string());
+            self.punjabi_rules.insert("ੱਸ".to_string(), "ਸ".to_string());
+        }
+        
+        if self.quality >= QualityLevel::Low {
+            self.punjabi_rules.insert("ਾ".to_string(), "".to_string());
+            self.punjabi_rules.insert("ੀ".to_string(), "ਿ".to_string());
+            self.punjabi_rules.insert("ੂ".to_string(), "ੁ".to_string());
+        }
+    }
+    
+    /// Odia (Oriya) specific normalization rules
+    fn add_odia_rules(&mut self) {
+        if self.quality >= QualityLevel::VeryHigh {
+            // Odia: Chandrabindu variants
+            self.odia_rules.insert("ଁ".to_string(), "ଂ".to_string());
+            self.odia_rules.insert("ୄ".to_string(), "ୃ".to_string());
+        }
+        
+        if self.quality >= QualityLevel::High {
+            // Double consonants
+            self.odia_rules.insert("କ୍କ".to_string(), "କ".to_string());
+            self.odia_rules.insert("ତ୍ତ".to_string(), "ତ".to_string());
+            self.odia_rules.insert("ନ୍ନ".to_string(), "ନ".to_string());
+            
+            // Common conjuncts
+            self.odia_rules.insert("କ୍ଷ".to_string(), "ଖ".to_string());
+            self.odia_rules.insert("ଜ୍ଞ".to_string(), "ଗ୍ୟ".to_string());
+        }
+        
+        if self.quality >= QualityLevel::Medium {
+            self.odia_rules.insert("ଲ୍ଲ".to_string(), "ଲ".to_string());
+            self.odia_rules.insert("ମ୍ମ".to_string(), "ମ".to_string());
+            self.odia_rules.insert("ପ୍ପ".to_string(), "ପ".to_string());
+        }
+        
+        if self.quality >= QualityLevel::Low {
+            self.odia_rules.insert("ା".to_string(), "".to_string());
+            self.odia_rules.insert("ୀ".to_string(), "ି".to_string());
+            self.odia_rules.insert("ୂ".to_string(), "ୁ".to_string());
         }
     }
     
@@ -171,18 +416,51 @@ impl LossyCompressor {
         
         let mut result = text.to_string();
         
-        // Apply Devanagari rules
+        // Apply all Indic script rules
+        // Order matters - apply more specific rules first
+        
+        // Devanagari (Hindi, Marathi, Sanskrit, Nepali)
         for (original, normalized) in &self.devanagari_rules {
             result = result.replace(original, normalized);
         }
         
-        // Apply Tamil rules
+        // Bengali (Bangla, Assamese)
+        for (original, normalized) in &self.bengali_rules {
+            result = result.replace(original, normalized);
+        }
+        
+        // Tamil
         for (original, normalized) in &self.tamil_rules {
             result = result.replace(original, normalized);
         }
         
-        // Apply Telugu rules
+        // Telugu
         for (original, normalized) in &self.telugu_rules {
+            result = result.replace(original, normalized);
+        }
+        
+        // Gujarati
+        for (original, normalized) in &self.gujarati_rules {
+            result = result.replace(original, normalized);
+        }
+        
+        // Malayalam
+        for (original, normalized) in &self.malayalam_rules {
+            result = result.replace(original, normalized);
+        }
+        
+        // Kannada
+        for (original, normalized) in &self.kannada_rules {
+            result = result.replace(original, normalized);
+        }
+        
+        // Punjabi (Gurmukhi)
+        for (original, normalized) in &self.punjabi_rules {
+            result = result.replace(original, normalized);
+        }
+        
+        // Odia (Oriya)
+        for (original, normalized) in &self.odia_rules {
             result = result.replace(original, normalized);
         }
         
