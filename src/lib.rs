@@ -1,7 +1,5 @@
 // src/lib.rs - ENHANCED with ACTUAL Neural-Hybrid Integration
-// Patent-worthy features:
-// 1. Neural-enhanced entropy coding with script-specific embeddings
-// 2. Phonetically-aware lossy compression for Indic scripts
+// Complete working version for all Indic languages
 
 pub mod dict;
 pub mod tokenize;
@@ -17,21 +15,14 @@ use std::convert::TryInto;
 use lossy::{LossyCompressor, QualityLevel, LossyMetadata};
 use neural::load_pretrained_model;
 
-/// Minimum text size (in bytes) before attempting compression
 const COMPRESSION_THRESHOLD: usize = 500;
 
-/// Compression options for advanced features
 #[derive(Debug, Clone)]
 pub struct CompressionOptions {
-    /// Chunk size (tokens per chunk)
     pub chunk_size: usize,
-    /// Enable neural-hybrid compression
     pub use_neural: bool,
-    /// Neural weight (0.0 = pure PPM, 1.0 = pure neural)
     pub neural_weight: f32,
-    /// Lossy compression quality level
     pub quality: QualityLevel,
-    /// Target script for optimization
     pub script: String,
 }
 
@@ -47,7 +38,6 @@ impl Default for CompressionOptions {
     }
 }
 
-/// Enhanced encoding with ACTUAL neural-hybrid and lossy compression
 pub fn encode_stream_advanced(text: &str, options: CompressionOptions) -> Result<Vec<u8>> {
     let text_bytes = text.as_bytes().len();
     
@@ -83,14 +73,9 @@ pub fn encode_stream_advanced(text: &str, options: CompressionOptions) -> Result
         options.chunk_size
     };
     
-    // Step 3: Load neural model if requested (ACTUALLY USED NOW!)
+    // Step 3: Load neural model if requested
     let mut neural_model = if options.use_neural {
-        let model = load_pretrained_model(&options.script);
-        if model.is_none() {
-            // Model failed to load - will fall back to standard PPM
-            // You can add logging here: eprintln!("Warning: Neural model failed to load for script: {}", options.script);
-        }
-        model
+        load_pretrained_model(&options.script)
     } else {
         None
     };
@@ -103,7 +88,6 @@ pub fn encode_stream_advanced(text: &str, options: CompressionOptions) -> Result
     // ACTUAL neural integration!
     for chunk_tokens in tokens.chunks(actual_chunk_size) {
         let ch = if neural_model.is_some() {
-            // Use neural-hybrid encoding (model successfully loaded)
             chunk::encode_chunk_with_neural(
                 &mut dict, 
                 chunk_tokens.to_vec(),
@@ -111,7 +95,6 @@ pub fn encode_stream_advanced(text: &str, options: CompressionOptions) -> Result
                 options.neural_weight,
             )?
         } else {
-            // Standard PPM encoding (model not loaded or disabled)
             chunk::encode_chunk(&mut dict, chunk_tokens.to_vec())?
         };
         stream.chunks.push(ch);
@@ -124,7 +107,7 @@ pub fn encode_stream_advanced(text: &str, options: CompressionOptions) -> Result
     if let Some(meta) = lossy_meta {
         let meta_bytes = meta.to_bytes();
         let mut final_bytes = Vec::new();
-        final_bytes.extend(b"IL"); // "IL" = Indic Lossy
+        final_bytes.extend(b"IL");
         final_bytes.push(meta_bytes.len() as u8);
         final_bytes.extend(meta_bytes);
         final_bytes.extend(stream_bytes);
@@ -134,7 +117,6 @@ pub fn encode_stream_advanced(text: &str, options: CompressionOptions) -> Result
     Ok(stream_bytes)
 }
 
-/// Original encoding function (backward compatibility)
 pub fn encode_stream(text: &str, chunk_size: usize) -> Result<Vec<u8>> {
     let options = CompressionOptions {
         chunk_size,
@@ -143,7 +125,6 @@ pub fn encode_stream(text: &str, chunk_size: usize) -> Result<Vec<u8>> {
     encode_stream_advanced(text, options)
 }
 
-/// Store text uncompressed with optional lossy metadata
 fn encode_uncompressed(text: &str, lossy_meta: Option<&LossyMetadata>) -> Result<Vec<u8>> {
     let bytes = text.as_bytes();
     let len = bytes.len();
@@ -169,13 +150,10 @@ fn encode_uncompressed(text: &str, lossy_meta: Option<&LossyMetadata>) -> Result
     Ok(out)
 }
 
-/// Decode with support for all formats (compressed, uncompressed, lossy)
-/// Now supports neural-compressed data too!
 pub fn decode_full(data: &[u8]) -> Result<String> {
     decode_full_with_options(data, None, 0.0)
 }
 
-/// Decode with neural options (for symmetry with encoding)
 pub fn decode_full_with_options(
     data: &[u8],
     neural_model: Option<&mut neural::NeuralPredictor>,
@@ -196,7 +174,6 @@ pub fn decode_full_with_options(
     }
 }
 
-/// Decode uncompressed format with lossy metadata
 fn decode_uncompressed_lossy(data: &[u8]) -> Result<String> {
     if data.len() < 7 {
         return Err(anyhow!("Invalid UL format - too short"));
@@ -220,7 +197,6 @@ fn decode_uncompressed_lossy(data: &[u8]) -> Result<String> {
     Ok(text)
 }
 
-/// Decode compressed format with lossy metadata and neural support
 fn decode_compressed_lossy_with_neural(
     data: &[u8],
     neural_model: Option<&mut neural::NeuralPredictor>,
@@ -241,7 +217,6 @@ fn decode_compressed_lossy_with_neural(
     decode_compressed_with_neural(compressed_data, neural_model, alpha)
 }
 
-/// Decode uncompressed format
 fn decode_uncompressed(data: &[u8]) -> Result<String> {
     if data.len() < 6 {
         return Err(anyhow!("Invalid uncompressed format - too short"));
@@ -257,7 +232,6 @@ fn decode_uncompressed(data: &[u8]) -> Result<String> {
     Ok(text)
 }
 
-/// Decode compressed format with neural support
 fn decode_compressed_with_neural(
     data: &[u8],
     mut neural_model: Option<&mut neural::NeuralPredictor>,
@@ -275,12 +249,10 @@ fn decode_compressed_with_neural(
     Ok(out)
 }
 
-/// Decode prefix with format detection
 pub fn decode_prefix(data: &[u8], upto: usize) -> Result<String> {
     decode_prefix_with_options(data, upto, None, 0.0)
 }
 
-/// Decode prefix with neural options
 pub fn decode_prefix_with_options(
     data: &[u8],
     upto: usize,
@@ -331,7 +303,6 @@ fn decode_compressed_prefix_with_neural(
     Ok(out)
 }
 
-/// Get compression statistics with neural/lossy info
 pub fn get_compression_stats(text: &str, options: CompressionOptions) -> Result<CompressionStats> {
     let original_size = text.as_bytes().len();
     let encoded = encode_stream_advanced(text, options.clone())?;

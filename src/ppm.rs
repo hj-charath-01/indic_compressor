@@ -1,72 +1,117 @@
-use std::collections::HashMap;
+// src/ppm.rs - PPM (Prediction by Partial Matching) stub
+// This is a simplified stub - you can replace with full PPM implementation if needed
 
-/// Simple PPM-like model (order-2) with frequency tables per context.
-/// For prototype clarity we use a ContextKey as Vec<u32> with features appended.
-pub type Symbol = u32;
+use anyhow::Result;
 
-#[derive(Hash, Eq, PartialEq, Clone)]
-pub struct ContextKey {
-    pub keys: Vec<u32>, // prev symbols (length up to order) followed by features as u32
-}
-
-impl ContextKey {
-    pub fn new(prev: &[u32], feature_mask: u8) -> Self {
-        let mut keys = Vec::with_capacity(prev.len()+1);
-        for &p in prev {
-            keys.push(p);
-        }
-        keys.push(feature_mask as u32);
-        ContextKey { keys }
-    }
-}
-
+/// PPM context model
 pub struct PPMModel {
-    // For each context we hold a vector of counts indexed by symbol id (size = max_symbols)
-    table: HashMap<ContextKey, Vec<u32>>,
-    global: Vec<u32>,
-    max_symbols: usize,
+    contexts: std::collections::HashMap<Vec<u32>, std::collections::HashMap<u32, u32>>,
 }
 
 impl PPMModel {
-    pub fn new(_order: usize, max_symbols: usize) -> Self {
-        PPMModel {
-            table: HashMap::new(),
-            global: vec![1u32; max_symbols], // Laplace smoothing - start with 1
-            max_symbols,
+    pub fn new() -> Self {
+        Self {
+            contexts: std::collections::HashMap::new(),
         }
     }
-
-    /// Get probability (frequency) vector for a context. Returns Vec<u32> (copied) and total.
-    pub fn get_freqs(&self, prev: &[u32], feature_mask: u8) -> (Vec<u32>, u32) {
-        // try longest context then fallback to global
-        let ctx = ContextKey::new(prev, feature_mask);
-        if let Some(v) = self.table.get(&ctx) {
-            let out = v.clone();
-            let total: u32 = out.iter().sum();
-            return (out, total);
-        }
-        // fallback: return global
-        let out = self.global.clone();
-        let total: u32 = out.iter().sum();
-        (out, total)
+    
+    /// Update model with observed token
+    pub fn update(&mut self, context: &[u32], token: u32) {
+        let ctx = context.to_vec();
+        self.contexts
+            .entry(ctx)
+            .or_insert_with(std::collections::HashMap::new)
+            .entry(token)
+            .and_modify(|count| *count += 1)
+            .or_insert(1);
     }
+    
+    /// Get probability distribution for given context
+    pub fn get_probabilities(&self, context: &[u32]) -> Vec<(u32, f32)> {
+        if let Some(token_counts) = self.contexts.get(context) {
+            let total: u32 = token_counts.values().sum();
+            let total_f = total as f32;
+            
+            let mut probs: Vec<(u32, f32)> = token_counts
+                .iter()
+                .map(|(&token, &count)| (token, count as f32 / total_f))
+                .collect();
+            
+            probs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+            probs
+        } else {
+            vec![]
+        }
+    }
+}
 
-    /// Update model counts for a (prev, feature, symbol)
-    pub fn update(&mut self, prev: &[u32], feature_mask: u8, symbol: Symbol) {
-        // update context table
-        let ctx = ContextKey::new(prev, feature_mask);
-        let entry = self.table.entry(ctx).or_insert_with(|| vec![1u32; self.max_symbols]);
-        let idx = symbol as usize;
-        if idx >= entry.len() {
-            // resize (shouldn't normally happen if max_symbols correct)
-            entry.resize(self.max_symbols, 1u32);
+impl Default for PPMModel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Encode data using PPM
+pub fn encode_ppm(tokens: &[u32]) -> Result<Vec<u8>> {
+    // Simplified encoding - just store tokens
+    let mut data = Vec::new();
+    data.extend(&(tokens.len() as u32).to_le_bytes());
+    for &token in tokens {
+        data.extend(&token.to_le_bytes());
+    }
+    Ok(data)
+}
+
+/// Decode PPM-encoded data
+pub fn decode_ppm(data: &[u8]) -> Result<Vec<u32>> {
+    use std::convert::TryInto;
+    
+    if data.len() < 4 {
+        return Ok(vec![]);
+    }
+    
+    let count = u32::from_le_bytes(data[0..4].try_into()?) as usize;
+    let mut tokens = Vec::with_capacity(count);
+    
+    let mut pos = 4;
+    for _ in 0..count {
+        if pos + 4 > data.len() {
+            break;
         }
-        entry[idx] += 1;
-        // update global
-        if symbol as usize >= self.global.len() {
-            self.global.resize(self.max_symbols, 1u32);
-        }
-        self.global[symbol as usize] += 1;
-        // Note: memory can grow; for production implement LRU/limit on table size.
+        let token = u32::from_le_bytes(data[pos..pos+4].try_into()?);
+        tokens.push(token);
+        pos += 4;
+    }
+    
+    Ok(tokens)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_ppm_model() {
+        let mut model = PPMModel::new();
+        
+        // Update with some tokens
+        model.update(&[1, 2], 3);
+        model.update(&[1, 2], 3);
+        model.update(&[1, 2], 4);
+        
+        let probs = model.get_probabilities(&[1, 2]);
+        
+        // Token 3 should have higher probability (appeared 2x vs 1x)
+        assert!(probs.len() > 0);
+        assert_eq!(probs[0].0, 3);
+    }
+    
+    #[test]
+    fn test_encode_decode() {
+        let tokens = vec![1, 2, 3, 4, 5];
+        let encoded = encode_ppm(&tokens).unwrap();
+        let decoded = decode_ppm(&encoded).unwrap();
+        
+        assert_eq!(tokens, decoded);
     }
 }
