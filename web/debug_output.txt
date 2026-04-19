@@ -1,6 +1,0 @@
-    Finished `release` profile [optimized] target(s) in 0.03s
-     Running `/home/charath/indic_ans_compressor/target/release/examples/cli`
-Original: यादृच्छिक तरीके से आपको दूंगा
-Stream bytes: 201
-Decoded equals original? true
-Decoded: यादृच्छिक तरीके से आपको दूंगा
