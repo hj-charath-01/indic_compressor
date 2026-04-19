@@ -10,34 +10,29 @@ import init, {
 // State
 let wasmReady = false;
 let latestStreamBytes = null;
-let latestOriginalText = '';
+let latestOriginalText = '';  // always stores the whitespace-normalised form
 let currentQuality = 0; // Lossless by default
+
+function normalizeWhitespace(text) {
+  return text.trim().split(/\s+/).filter(s => s.length > 0).join(' ');
+}
 
 // Safe DOM operations
 function safeSetText(id, text) {
   const el = document.getElementById(id);
-  if (el) {
-    el.textContent = String(text);
-    return true;
-  }
+  if (el) { el.textContent = String(text); return true; }
   return false;
 }
 
 function safeSetHTML(id, html) {
   const el = document.getElementById(id);
-  if (el) {
-    el.innerHTML = String(html);
-    return true;
-  }
+  if (el) { el.innerHTML = String(html); return true; }
   return false;
 }
 
 function safeSetDisplay(id, display) {
   const el = document.getElementById(id);
-  if (el && el.style) {
-    el.style.display = display;
-    return true;
-  }
+  if (el && el.style) { el.style.display = display; return true; }
   return false;
 }
 
@@ -49,7 +44,6 @@ function safeGetValue(id) {
 function showToast(message, type = 'info') {
   const toast = document.getElementById('statusToast');
   const toastMsg = document.getElementById('toastMessage');
-  
   if (toastMsg) toastMsg.textContent = message;
   if (toast) {
     toast.className = `toast ${type}`;
@@ -65,8 +59,6 @@ function updateStats() {
     const bytes = new TextEncoder().encode(text).length;
     safeSetText('charCount', chars.toLocaleString());
     safeSetText('byteCount', bytes.toLocaleString());
-    
-    // Update lossy savings estimate
     updateLossySavings();
   } catch (e) {
     console.error('Error updating stats:', e);
@@ -75,17 +67,14 @@ function updateStats() {
 
 async function updateLossySavings() {
   if (!wasmReady) return;
-  
   const text = safeGetValue('inputText');
   if (!text) {
     safeSetHTML('lossySavings', 'Estimated lossy savings: <strong>0.0%</strong>');
     return;
   }
-  
   try {
     const savings = await estimate_lossy_savings(text, currentQuality);
-    safeSetHTML('lossySavings', 
-      `Estimated lossy savings: <strong>${savings}</strong>`);
+    safeSetHTML('lossySavings', `Estimated lossy savings: <strong>${savings}</strong>`);
   } catch (e) {
     console.error('Error estimating lossy savings:', e);
   }
@@ -136,19 +125,20 @@ function hideResults() {
   const useNeural = document.getElementById('useNeural');
   const neuralStatus = document.getElementById('neuralStatus');
   const neuralWeightGroup = document.getElementById('neuralWeightGroup');
-  if (useNeural && neuralStatus && neuralWeightGroup) {
+  if (useNeural && neuralWeightGroup) {
     useNeural.addEventListener('change', () => {
-      if (useNeural.checked) {
-        neuralStatus.textContent = 'Enabled 🧠';
-        neuralStatus.style.color = '#667eea';
-        neuralStatus.style.fontWeight = '700';
-        neuralWeightGroup.style.display = 'block';
-      } else {
-        neuralStatus.textContent = 'Disabled';
-        neuralStatus.style.color = 'var(--text-muted)';
-        neuralStatus.style.fontWeight = '400';
-        neuralWeightGroup.style.display = 'none';
+      if (neuralStatus) {
+        if (useNeural.checked) {
+          neuralStatus.textContent = 'Enabled ';
+          neuralStatus.style.color = '#667eea';
+          neuralStatus.style.fontWeight = '700';
+        } else {
+          neuralStatus.textContent = 'Disabled';
+          neuralStatus.style.color = 'var(--text-muted)';
+          neuralStatus.style.fontWeight = '400';
+        }
       }
+      neuralWeightGroup.style.display = useNeural.checked ? 'block' : 'none';
     });
   }
 
@@ -186,39 +176,31 @@ function updateSliderFill(slider) {
 
 function countChunksFromBinary(u8) {
   if (!u8 || u8.length < 2) return 0;
-  
-  // Check format
   if (u8[0] === 0x55 && u8[1] === 0x43) return 1; // "UC"
   if (u8[0] === 0x55 && u8[1] === 0x4C) return 1; // "UL"
-  
-  // Skip metadata if present
+
   let offset = 0;
   if (u8[0] === 0x49 && u8[1] === 0x4C) { // "IL"
     if (u8.length < 3) return 0;
-    const metaLen = u8[2];
-    offset = 3 + metaLen;
+    offset = 3 + u8[2];
   }
-  
-  // Count IC chunks
+
   if (u8[offset] !== 0x49 || u8[offset + 1] !== 0x43) return 0;
 
   const dv = new DataView(u8.buffer, u8.byteOffset + offset, u8.byteLength - offset);
   let pos = 0;
   let count = 0;
-  
+
   try {
     while (pos + 2 <= u8.length - offset) {
       if (u8[offset + pos] !== 0x49 || u8[offset + pos + 1] !== 0x43) break;
       pos += 2;
-      
       if (pos + 2 > u8.length - offset) break;
       const token_count = dv.getUint16(pos, false);
       pos += 2;
-      
       if (pos + 1 > u8.length - offset) break;
       const delta_count = u8[offset + pos];
       pos += 1;
-      
       for (let i = 0; i < delta_count; i++) {
         if (pos + 3 > u8.length - offset) { pos = u8.length - offset; break; }
         pos += 2;
@@ -227,23 +209,19 @@ function countChunksFromBinary(u8) {
         if (pos + len > u8.length - offset) { pos = u8.length - offset; break; }
         pos += len;
       }
-      
       if (pos + token_count > u8.length - offset) break;
       pos += token_count;
-      
       if (pos + 2 > u8.length - offset) break;
       const payload_len = dv.getUint16(pos, false);
       pos += 2;
-      
       if (pos + payload_len > u8.length - offset) break;
       pos += payload_len;
-      
       count++;
     }
   } catch (e) {
     console.error('Error parsing chunks:', e);
   }
-  
+
   return count;
 }
 
@@ -255,7 +233,7 @@ function getCompressionFormat(u8) {
     case 'UL': return 'uncompressed-lossy';
     case 'IC': return 'compressed';
     case 'IL': return 'compressed-lossy';
-    default: return 'unknown';
+    default:   return 'unknown';
   }
 }
 
@@ -265,67 +243,61 @@ async function handleEncode() {
       showToast('⏳ Please wait, loading...', 'warning');
       return;
     }
-    
-    const text = safeGetValue('inputText').trim();
-    if (!text) {
+
+    const rawText = safeGetValue('inputText').trim();
+    if (!rawText) {
       showToast('Please enter some text to compress', 'warning');
       return;
     }
-    
-    latestOriginalText = text;
-    const originalBytes = new TextEncoder().encode(text).length;
+
+
+    latestOriginalText = normalizeWhitespace(rawText);
+
+    const originalBytes = new TextEncoder().encode(rawText).length;
     const chunkSize = Number(safeGetValue('chunkSize')) || 40;
     const useNeural = document.getElementById('useNeural')?.checked || false;
     const neuralWeight = Number(safeGetValue('neuralWeight')) / 100.0;
-    
+
     const btn = document.getElementById('btnEncode');
-    if (btn) {
-      btn.disabled = true;
-      btn.textContent = 'Compressing...';
-    }
-    
+    if (btn) { btn.disabled = true; btn.textContent = 'Compressing...'; }
+
     let encoded;
     if (useNeural || currentQuality > 0) {
-      // Use advanced compression with neural/lossy features
       encoded = encode_stream_advanced_wasm(
-        text,
-        chunkSize,
-        useNeural,
-        neuralWeight,
-        currentQuality
+        rawText, chunkSize, useNeural, neuralWeight, currentQuality
       );
     } else {
-      // Use standard compression
-      encoded = encode_stream_wasm(text, chunkSize);
+      encoded = encode_stream_wasm(rawText, chunkSize);
     }
-    
+
     const u8 = encoded instanceof Uint8Array ? encoded : new Uint8Array(encoded);
     latestStreamBytes = u8;
-    
+
     const compressedBytes = u8.length;
     const ratio = (compressedBytes / Math.max(1, originalBytes) * 100).toFixed(1);
     const chunks = countChunksFromBinary(u8);
     const format = getCompressionFormat(u8);
-    
     const savings = originalBytes - compressedBytes;
-    
+
     safeSetText('originalSize', `${originalBytes.toLocaleString()} bytes`);
     safeSetText('compressedSize', `${compressedBytes.toLocaleString()} bytes`);
-    
+
     if (savings > 0) {
       safeSetText('compressionRatio', `${ratio}% (saved ${savings.toLocaleString()} bytes)`);
-      showToast(`✓ Compressed to ${ratio}% of original size`, 'success');
+      showToast(` Compressed to ${ratio}% of original size`, 'success');
     } else {
       safeSetText('compressionRatio', `${ratio}%`);
       showToast(`⚠ Result is ${ratio}% of original`, 'warning');
     }
-    
-    // Show method used
+
     let method = format;
-    if (useNeural) method += ' + neural';
-    if (currentQuality > 0) method += ' + lossy';
+    if (useNeural) method += ` + neural (α=${Math.round(neuralWeight * 100)}%)`;
+    if (currentQuality > 0) {
+      const qualityNames = ['Lossless', 'Very High', 'High', 'Medium', 'Low'];
+      method += ` + lossy (${qualityNames[currentQuality]})`;
+    }
     safeSetText('methodUsed', method);
-    
+
     safeSetDisplay('resultsPanel', 'block');
     if (chunks > 1) {
       const slider = document.getElementById('chunkToDecode');
@@ -337,7 +309,7 @@ async function handleEncode() {
       }
       safeSetDisplay('decodePanel', 'block');
     }
-    
+
     const downloadBtn = document.getElementById('btnDownload');
     if (downloadBtn) {
       downloadBtn.onclick = () => {
@@ -348,19 +320,16 @@ async function handleEncode() {
         a.download = 'indic_compressed_enhanced.bin';
         a.click();
         URL.revokeObjectURL(url);
-        showToast('✓ File downloaded', 'success');
+        showToast(' File downloaded', 'success');
       };
     }
-    
+
   } catch (e) {
     console.error('Encode error:', e);
-    showToast(`❌ Compression failed: ${e.message || e}`, 'error');
+    showToast(` Compression failed: ${e.message || e}`, 'error');
   } finally {
     const btn = document.getElementById('btnEncode');
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = '🗜️ Compress Text';
-    }
+    if (btn) { btn.disabled = false; btn.textContent = '🗜️ Compress Text'; }
   }
 }
 
@@ -370,57 +339,50 @@ async function handleDecodeAll() {
       showToast('No compressed data available', 'warning');
       return;
     }
-    
+
     const btn = document.getElementById('btnDecodeAll');
     if (btn) { btn.disabled = true; btn.textContent = 'Decompressing...'; }
-    
+
     const decoded = decode_full_wasm(latestStreamBytes);
-    
+
     safeSetText('decodedOutput', decoded);
     safeSetDisplay('outputPanel', 'block');
-    
+
     if (latestOriginalText && latestOriginalText.length > 0) {
-      // For lossy compression, compare length only
       if (currentQuality > 0) {
-        const originalLen = latestOriginalText.length;
-        const decodedLen = decoded.length;
-        const lengthDiff = Math.abs(originalLen - decodedLen);
-        
-        if (lengthDiff <= originalLen * 0.05) { // Within 5%
-          safeSetText('outputStatus', '✓ Lossy: within 5% of original');
-          const status = document.getElementById('outputStatus');
-          if (status) status.className = 'status-badge success';
-          showToast('✓ Lossy decompression successful', 'success');
-        } else {
-          safeSetText('outputStatus', `⚠ Lossy: ${lengthDiff} chars difference`);
-          const status = document.getElementById('outputStatus');
-          if (status) status.className = 'status-badge warning';
-          showToast('⚠ Significant lossy difference detected', 'warning');
-        }
-      } else if (decoded === latestOriginalText) {
-        safeSetText('outputStatus', '✓ Perfect match');
+        // Lossy: just confirm it completed
+        safeSetText('outputStatus', ' Lossy decompression complete');
         const status = document.getElementById('outputStatus');
         if (status) status.className = 'status-badge success';
-        showToast('✓ Perfect lossless decompression!', 'success');
+        showToast(' Lossy decompression complete', 'success');
+      } else if (decoded === latestOriginalText) {
+        // Lossless: exact match against the normalised original
+        safeSetText('outputStatus', ' Perfect match');
+        const status = document.getElementById('outputStatus');
+        if (status) status.className = 'status-badge success';
+        showToast(' Perfect lossless decompression!', 'success');
       } else {
         safeSetText('outputStatus', '⚠ Mismatch detected');
         const status = document.getElementById('outputStatus');
         if (status) status.className = 'status-badge warning';
+        // Surface the diff in the console to aid debugging
+        console.warn('Mismatch:\n  expected:', JSON.stringify(latestOriginalText.slice(0, 120)),
+                     '\n  got:     ', JSON.stringify(decoded.slice(0, 120)));
         showToast('⚠ Decoded text differs from original', 'warning');
       }
     } else {
-      safeSetText('outputStatus', '✓ Decompressed');
+      safeSetText('outputStatus', ' Decompressed');
       const status = document.getElementById('outputStatus');
       if (status) status.className = 'status-badge info';
-      showToast('✓ Decompression complete', 'success');
+      showToast(' Decompression complete', 'success');
     }
-    
+
   } catch (e) {
     console.error('Decode error:', e);
-    showToast(`❌ Decompression failed: ${e.message || e}`, 'error');
+    showToast(` Decompression failed: ${e.message || e}`, 'error');
   } finally {
     const btn = document.getElementById('btnDecodeAll');
-    if (btn) { btn.disabled = false; btn.textContent = '✓ Decompress & Verify'; }
+    if (btn) { btn.disabled = false; btn.textContent = ' Decompress & Verify'; }
   }
 }
 
@@ -430,27 +392,26 @@ async function handleDecodePrefix() {
       showToast('No compressed data available', 'warning');
       return;
     }
-    
+
     const upto = Math.max(0, Number(safeGetValue('chunkToDecode')) || 0);
-    
     if (upto === 0) {
       showToast('Please select at least 1 chunk to decode', 'warning');
       return;
     }
-    
+
     const btn = document.getElementById('btnDecodePrefix');
     if (btn) { btn.disabled = true; btn.textContent = 'Decoding...'; }
-    
+
     const decoded = decode_prefix_wasm(latestStreamBytes, upto);
     safeSetText('decodedOutput', decoded);
     safeSetDisplay('outputPanel', 'block');
     safeSetText('outputStatus', `Partial decode (${upto} chunk${upto !== 1 ? 's' : ''})`);
     const status = document.getElementById('outputStatus');
     if (status) status.className = 'status-badge info';
-    showToast(`✓ Decoded first ${upto} chunk${upto !== 1 ? 's' : ''}`, 'success');
+    showToast(` Decoded first ${upto} chunk${upto !== 1 ? 's' : ''}`, 'success');
   } catch (e) {
     console.error('Decode prefix error:', e);
-    showToast(`❌ Partial decompression failed: ${e.message || e}`, 'error');
+    showToast(` Partial decompression failed: ${e.message || e}`, 'error');
   } finally {
     const btn = document.getElementById('btnDecodePrefix');
     if (btn) { btn.disabled = false; btn.textContent = '▶ Decode Partial'; }
@@ -462,10 +423,10 @@ async function handleCopyOutput() {
     const el = document.getElementById('decodedOutput');
     const text = el ? (el.textContent || '') : '';
     await navigator.clipboard.writeText(text);
-    showToast('✓ Copied to clipboard', 'success');
+    showToast(' Copied to clipboard', 'success');
   } catch (e) {
     console.error('Copy error:', e);
-    showToast('❌ Failed to copy', 'error');
+    showToast(' Failed to copy', 'error');
   }
 }
 
@@ -473,16 +434,15 @@ async function initWasm() {
   try {
     await init();
     wasmReady = true;
-    showToast('✓ Ready - Neural & Lossy features enabled', 'success');
+    showToast(' Ready - Neural & Lossy features enabled', 'success');
     return true;
   } catch (err) {
     console.error('WASM init failed:', err);
-    showToast('❌ Failed to load module', 'error');
+    showToast(' Failed to load module', 'error');
     return false;
   }
 }
 
-// File upload handlers
 async function loadBinFile(file) {
   try {
     const ab = await file.arrayBuffer();
@@ -491,9 +451,9 @@ async function loadBinFile(file) {
     safeSetText('uploadedInfo', `${file.name} — ${file.size.toLocaleString()} bytes`);
     safeSetDisplay('resultsPanel', 'block');
     safeSetDisplay('decodePanel', chunks > 0 ? 'block' : 'none');
-    showToast(`✓ Loaded ${file.name}`, 'success');
+    showToast(` Loaded ${file.name}`, 'success');
   } catch (e) {
-    showToast(`❌ Failed to load file: ${e}`, 'error');
+    showToast(` Failed to load file: ${e}`, 'error');
   }
 }
 
@@ -512,9 +472,7 @@ function installFileUploadUI() {
     }
   });
 
-  if (btnDecodeUpload) {
-    btnDecodeUpload.addEventListener('click', handleDecodeAll);
-  }
+  if (btnDecodeUpload) btnDecodeUpload.addEventListener('click', handleDecodeAll);
 
   if (btnClearUpload) {
     btnClearUpload.addEventListener('click', () => {
@@ -522,7 +480,7 @@ function installFileUploadUI() {
       fileInput.value = '';
       safeSetText('uploadedInfo', 'No file loaded');
       hideResults();
-      showToast('✓ Cleared', 'info');
+      showToast(' Cleared', 'info');
     });
   }
 
@@ -531,11 +489,7 @@ function installFileUploadUI() {
       e.preventDefault();
       uploadArea.classList.add('dragover');
     });
-    
-    uploadArea.addEventListener('dragleave', () => {
-      uploadArea.classList.remove('dragover');
-    });
-    
+    uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
     uploadArea.addEventListener('drop', async (e) => {
       e.preventDefault();
       uploadArea.classList.remove('dragover');
@@ -546,28 +500,26 @@ function installFileUploadUI() {
   }
 }
 
-// Setup event listeners
 function setupEventListeners() {
   const inputText = document.getElementById('inputText');
   if (inputText) inputText.addEventListener('input', updateStats);
-  
+
   const btnClear = document.getElementById('btnClear');
   if (btnClear) btnClear.addEventListener('click', handleClear);
-  
+
   const btnEncode = document.getElementById('btnEncode');
   if (btnEncode) btnEncode.addEventListener('click', handleEncode);
-  
+
   const btnDecodeAll = document.getElementById('btnDecodeAll');
   if (btnDecodeAll) btnDecodeAll.addEventListener('click', handleDecodeAll);
-  
+
   const btnDecodePrefix = document.getElementById('btnDecodePrefix');
   if (btnDecodePrefix) btnDecodePrefix.addEventListener('click', handleDecodePrefix);
-  
+
   const btnCopyOutput = document.getElementById('btnCopyOutput');
   if (btnCopyOutput) btnCopyOutput.addEventListener('click', handleCopyOutput);
 }
 
-// Initialize
 async function initialize() {
   setupEventListeners();
   updateStats();

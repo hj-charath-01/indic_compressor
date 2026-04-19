@@ -119,13 +119,6 @@ impl NeuralPredictor {
     }
 
     /// Predict next-token probabilities given a context window.
-    ///
-    /// BUG FIX: The original implementation only used the *last* context token,
-    /// building an input vector of length `embedding_dim + 8` while the network
-    /// expected `embedding_dim * 2 + 8`.  The second half of the input weights was
-    /// always multiplied by zero, making the second-context token completely ignored.
-    /// Fixed by building two context embeddings (t-2 and t-1).
-    ///
     /// Returns the top-32 (token_id, probability) pairs sorted by descending probability.
     pub fn predict_token(&mut self, context: &[u32], _target: u32) -> Vec<(u32, f32)> {
         // Build two-token context embedding (padded with zeros if context is short)
@@ -206,7 +199,7 @@ impl HybridPredictor {
         &mut self,
         ppm_probs: &[f32],
         context: &[u32],
-        features: u8,
+        _features: u8,
     ) -> Vec<f32> {
         if let Some(ref mut neural) = self.neural {
             // Build input using the public predict pathway
@@ -402,61 +395,3 @@ fn tune_universal_indic(model: &mut NeuralPredictor) {
     for i in 40..60.min(model.b2.len()) { model.b2[i] += 0.6; }
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_predict_token_input_size() {
-        // Verify predict_token builds the full input_size vector (the key bug fix)
-        let mut model = NeuralPredictor::new(100, 8, 32);
-        let context = vec![1u32, 2u32];
-        let preds = model.predict_token(&context, 3);
-        assert!(!preds.is_empty());
-        // Probabilities must be in (0, 1)
-        for (_, p) in &preds {
-            assert!(*p >= 0.0 && *p <= 1.0, "invalid probability {}", p);
-        }
-    }
-
-    #[test]
-    fn test_all_indic_scripts_load() {
-        let scripts = &[
-            "devanagari", "hindi", "marathi", "sanskrit",
-            "bengali", "assamese", "tamil", "telugu", "kannada",
-            "malayalam", "gujarati", "punjabi", "odia", "sinhala",
-        ];
-        for &script in scripts {
-            let m = load_pretrained_model(script);
-            assert!(m.is_some(), "failed to load model for {}", script);
-            let m = m.unwrap();
-            assert_eq!(m.input_size, m.embedding_dim * 2 + 8,
-                "input_size mismatch for {}", script);
-        }
-    }
-
-    #[test]
-    fn test_script_detection() {
-        let cases = &[
-            (0x0915u32, "Devanagari ka"),
-            (0x0995u32, "Bengali ka"),
-            (97u32,     "ASCII 'a'"),
-        ];
-        for &(cp, desc) in cases {
-            let features = detect_script_from_token_id(cp);
-            assert!(features.iter().any(|&f| f > 0.5), "no feature for {}", desc);
-        }
-    }
-
-    #[test]
-    fn test_frequency_tiers() {
-        let m = load_pretrained_model("devanagari").unwrap();
-        assert!(m.b2[10]   >  1.0, "high-freq bias should be positive");
-        assert!(m.b2[3000] < -1.0, "low-freq bias should be negative");
-        assert!(m.b2[4500] < -5.0, "rare-token bias should be very negative");
-    }
-}

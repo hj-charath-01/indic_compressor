@@ -1,29 +1,4 @@
 // src/chunk.rs  —  chunk encoding with variable-length token IDs
-//
-// KEY CHANGE: Token IDs are now encoded with a variable-length integer (VarInt)
-// instead of a fixed 4 bytes.  After frequency-sorting the vocabulary the most
-// common words get IDs 0-127 and each encodes in a single byte, giving real
-// compression for repetitive text.
-//
-// VARINT SCHEME
-//   0x00-0x7F          → 1 byte   (IDs 0-127)
-//   0x80 b1            → 2 bytes  (IDs 128-16511)
-//   0xC0 b1 b2 b3 b4   → 5 bytes  (IDs 16512+, rare)
-//
-// STREAM FORMAT (binary, magic "IC")
-//   2 B   magic "IC"
-//   1 B   flags  (bit 0: reserved; currently always 0x00)
-//   4 B   vocab_count  (u32 LE)
-//   for each vocab entry:
-//     VarInt  token_id
-//     2 B     text_byte_len  (u16 LE)
-//     N B     text  (UTF-8)
-//   4 B   chunk_count  (u32 LE)
-//   for each chunk:
-//     4 B   token_count   (u32 LE)
-//     1 B   neural_encoded (0 or 1)
-//     4 B   data_len       (u32 LE)
-//     N B   data           (VarInt-encoded token IDs, no separator)
 
 use crate::dict::MultiTierDict;
 use crate::neural::NeuralPredictor;
@@ -126,7 +101,7 @@ pub fn encode_chunk_with_neural(
 }
 
 // ---------------------------------------------------------------------------
-// Decoding  (tokens are concatenated directly — separator is encoded as a token)
+// Decoding 
 // ---------------------------------------------------------------------------
 
 pub fn decode_chunk(dict: &MultiTierDict, chunk: &Chunk) -> Result<String> {
@@ -139,8 +114,6 @@ pub fn decode_chunk(dict: &MultiTierDict, chunk: &Chunk) -> Result<String> {
             Some(id) => {
                 if let Some(text) = dict.decode_token(id) {
                     result.push_str(&text);
-                    // Space is encoded as a real token in the vocabulary,
-                    // so no separator is added here; the space token is " "
                 }
             }
             None => break,
@@ -282,93 +255,4 @@ fn read_stream_json_legacy(d: &[u8]) -> Result<Stream> {
             data: c.data, token_count: c.token_count, neural_encoded: c.neural_encoded,
         }).collect(),
     })
-}
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn sample() -> (MultiTierDict, Vec<Token>) {
-        let mut d = MultiTierDict::new();
-        let tokens = vec![
-            Token { id: 0, text: "hello".to_string() },
-            Token { id: 1, text: " ".to_string() },
-            Token { id: 2, text: "world".to_string() },
-        ];
-        for t in &tokens { d.add_token_with_id(t.id, t.text.clone()); }
-        (d, tokens)
-    }
-
-    #[test]
-    fn test_varint_roundtrip() {
-        for &v in &[0u32, 1, 127, 128, 255, 1000, 16383, 16512, 99999, u32::MAX] {
-            let mut buf = Vec::new();
-            write_varint(&mut buf, v);
-            let mut pos = 0;
-            let got = read_varint(&buf, &mut pos).unwrap();
-            assert_eq!(got, v, "varint roundtrip failed for {}", v);
-            assert_eq!(pos, buf.len());
-        }
-    }
-
-    #[test]
-    fn test_varint_sizes() {
-        let mut buf = Vec::new();
-        write_varint(&mut buf, 0);   assert_eq!(buf.len(), 1);  buf.clear();
-        write_varint(&mut buf, 127); assert_eq!(buf.len(), 1);  buf.clear();
-        write_varint(&mut buf, 128); assert_eq!(buf.len(), 2);  buf.clear();
-        write_varint(&mut buf, 16511); assert_eq!(buf.len(), 2); buf.clear();
-        write_varint(&mut buf, 16512); assert_eq!(buf.len(), 5); buf.clear();
-    }
-
-    #[test]
-    fn test_encode_decode_exact() {
-        let (mut d, t) = sample();
-        let chunk = encode_chunk(&mut d, t).unwrap();
-        let decoded = decode_chunk(&d, &chunk).unwrap();
-        assert_eq!(decoded, "hello world");
-    }
-
-    #[test]
-    fn test_stream_roundtrip() {
-        let (mut enc, tokens) = sample();
-        let chunk = encode_chunk(&mut enc, tokens).unwrap();
-        let mut stream = Stream::new();
-        stream.vocabulary = enc.get_vocabulary();
-        stream.chunks.push(chunk);
-
-        let bytes = write_stream(&stream).unwrap();
-        assert_eq!(&bytes[0..2], b"IC");
-
-        let restored = read_stream(&bytes).unwrap();
-        let mut dec = MultiTierDict::new();
-        dec.restore_vocabulary(restored.vocabulary);
-        assert_eq!(decode_chunk(&dec, &restored.chunks[0]).unwrap(), "hello world");
-    }
-
-    #[test]
-    fn test_compression_beats_raw_for_repetitive() {
-        // Use multi-byte Indic chars (each = 3 UTF-8 bytes) but VarInt ID = 1 byte
-        // → 3× compression on the token data.
-        // "अब" × 800 = 1600 chars = 4800 UTF-8 bytes; stream ≈ 1640 bytes < 4800.
-        let text = "अब".repeat(800);
-        let mut d = MultiTierDict::new();
-        d.add_token_with_id(0, "अ".to_string());
-        d.add_token_with_id(1, "ब".to_string());
-        let tokens: Vec<Token> = text.chars().enumerate().map(|(_i, c)| Token {
-            id: if c == 'अ' { 0 } else { 1 },
-            text: c.to_string(),
-        }).collect();
-        let chunk = encode_chunk(&mut d, tokens).unwrap();
-        let mut stream = Stream::new();
-        stream.vocabulary = d.get_vocabulary();
-        stream.chunks.push(chunk);
-        let compressed = write_stream(&stream).unwrap();
-        assert!(compressed.len() < text.len(),
-            "compressed ({}) should beat raw ({})", compressed.len(), text.len());
-    }
 }

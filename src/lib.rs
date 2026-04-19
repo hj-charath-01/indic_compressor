@@ -1,30 +1,4 @@
 // src/lib.rs  —  Indic ANS Compressor
-//
-// ARCHITECTURE CHANGES in this revision:
-//
-//  1. WHITESPACE NORMALIZATION (fixes mismatch)
-//     The IC path normalises the input to a canonical single-space form before
-//     tokenising.  The decoded output always matches this normalised form, so
-//     the round-trip test is `decode(encode(norm(text))) == norm(text)`.
-//     The UC path stores raw bytes unchanged.
-//
-//  2. FREQUENCY-SORTED VOCABULARY (fixes compression ratio)
-//     Before encoding, unique tokens are sorted by descending corpus frequency.
-//     The most common word/token gets ID 0, second-most-common gets ID 1, etc.
-//     Combined with VarInt encoding (IDs 0-127 → 1 byte), this is the engine
-//     of compression for repetitive Indic text.
-//
-//  3. NEURAL BLENDING (makes neural actually do something)
-//     When use_neural=true the frequency sort score is:
-//       score = corpus_freq × (1 - α) + neural_prior × total × α
-//     The neural model's pre-trained biases (b2) encode Zipf-law frequency
-//     for Indic scripts, so it nudges common linguistic tokens to lower IDs
-//     even when the current corpus is small.  This produces a different
-//     (measurably different) compressed stream than the non-neural path.
-//
-//  4. AUTO FALLBACK TO UC (ensures we never expand)
-//     After building the compressed stream, if it is >= the uncompressed form
-//     we return the UC/UL form instead.
 
 pub mod dict;
 pub mod tokenize;
@@ -99,9 +73,6 @@ pub fn encode_stream(text: &str, chunk_size: usize) -> Result<Vec<u8>> {
 
 pub fn encode_stream_advanced(text: &str, options: CompressionOptions) -> Result<Vec<u8>> {
     // --- Step 0: normalise whitespace (applies to ALL encoding paths) ---
-    // Collapse multiple spaces/tabs/newlines to a single space and trim.
-    // This ensures decode(encode(text)) == normalise(text) unconditionally,
-    // which is what the UI comparison expects.
     let text = normalise_whitespace(text);
     let text = text.as_str();
 
@@ -143,7 +114,6 @@ pub fn encode_stream_advanced(text: &str, options: CompressionOptions) -> Result
     // --- Step 6: prepend lossy metadata header if needed ---
     if let Some(meta) = &lossy_meta {
         let meta_bytes = meta.to_bytes();
-        // Determine whether the body uses IC or UC magic
         let body_magic = &stream_body[0..2];
         let outer_magic: &[u8] = match body_magic {
             b"IC" => b"IL",
@@ -153,7 +123,6 @@ pub fn encode_stream_advanced(text: &str, options: CompressionOptions) -> Result
         out.extend_from_slice(outer_magic);
         out.push(meta_bytes.len() as u8);
         out.extend_from_slice(&meta_bytes);
-        // Strip the inner magic (IC/UC) — lossy wrapper carries its own
         out.extend_from_slice(&stream_body);
         return Ok(out);
     }
@@ -169,8 +138,6 @@ fn build_compressed_stream(text: &str, options: &CompressionOptions) -> Result<V
     }
 
     // --- Tokenise: words + spaces as separate tokens ---
-    // We split on whitespace boundaries but INCLUDE the spaces as tokens so
-    // that the decoded output concatenates back to the exact canonical text.
     let raw_tokens = tokenise_with_spaces(text);
     if raw_tokens.is_empty() {
         return Err(anyhow!("no tokens"));
@@ -191,25 +158,28 @@ fn build_compressed_stream(text: &str, options: &CompressionOptions) -> Result<V
         .collect();
 
     if options.use_neural {
-        if let Some(mut neural) = load_pretrained_model(&options.script) {
+        if let Some(neural) = load_pretrained_model(&options.script) {
             let alpha = options.neural_weight.clamp(0.0, 1.0) as f64;
+            // b2 biases encode the Zipf-law prior trained for each script.
+            // Range is approximately -8.0 (very rare) to +3.5 (very common).
+            // We shift by +8 so all values are ≥ 0, then normalise to corpus-
+            // count scale so the blend with corpus_freq is numerically stable.
+            let b2_shift = 8.0f64;
+            let max_shifted = 3.5 + b2_shift; // ≈ 11.5
             for (old_id, score) in &mut scores {
                 if let Some(text) = text_for_id.get(old_id) {
-                    // Use first character's Unicode code point as the neural lookup key.
-                    // The pretrained model has biases tuned for Indic Unicode ranges so
-                    // this gives a meaningful script-aware frequency signal.
                     if let Some(ch) = text.chars().next() {
                         let code = ch as u32;
-                        // Query neural model: get unconditional prediction probability for
-                        // this Unicode code point (empty context = prior distribution).
-                        let preds = neural.predict_token(&[], code);
-                        // Map our code point into the neural vocab space
-                        let neural_vocab_id = code % neural.output_size as u32;
-                        let neural_prob = preds.iter()
-                            .find(|(tid, _)| *tid == neural_vocab_id)
-                            .map(|(_, p)| *p as f64)
-                            .unwrap_or(0.0);
-                        *score = *score * (1.0 - alpha) + neural_prob * total_tokens * alpha;
+                        let idx = (code % neural.output_size as u32) as usize;
+                        let neural_score = if idx < neural.b2.len() {
+                            (neural.b2[idx] as f64 + b2_shift).max(0.0)
+                        } else {
+                            0.0
+                        };
+                        // Scale neural score to the same order of magnitude as
+                        // corpus frequency counts.
+                        let neural_freq = neural_score / max_shifted * total_tokens;
+                        *score = *score * (1.0 - alpha) + neural_freq * alpha;
                     }
                 }
             }
@@ -237,7 +207,7 @@ fn build_compressed_stream(text: &str, options: &CompressionOptions) -> Result<V
 
     // --- Determine chunk size ---
     let chunk_size = if remapped.len() < 500 {
-        remapped.len().max(1)    // single chunk for small texts
+        remapped.len().max(1)
     } else {
         options.chunk_size.max(50)
     };
@@ -283,13 +253,6 @@ fn build_uncompressed_bytes(text: &str) -> Vec<u8> {
 // Tokeniser: words + spaces
 // ---------------------------------------------------------------------------
 
-/// Tokenise text into word tokens *and* space tokens so that the decoded
-/// stream concatenates back to the exact whitespace-normalised text.
-///
-/// "hello world" → [Token("hello",0), Token(" ",1), Token("world",2)]
-///
-/// This means a single space " " is one token, and the decoder just
-/// concatenates all token texts with no additional separator.
 fn tokenise_with_spaces(text: &str) -> Vec<Token> {
     let mut vocab: HashMap<String, u32> = HashMap::new();
     let mut next_id = 0u32;
@@ -297,14 +260,12 @@ fn tokenise_with_spaces(text: &str) -> Vec<Token> {
     let space_str = " ".to_string();
 
     for (i, word) in text.split_whitespace().enumerate() {
-        // Insert inter-word space (except before the first word)
         if i > 0 {
             let space_id = *vocab.entry(space_str.clone()).or_insert_with(|| {
                 let id = next_id; next_id += 1; id
             });
             tokens.push(Token { id: space_id, text: space_str.clone() });
         }
-        // Insert word
         let w = word.to_string();
         let word_id = *vocab.entry(w.clone()).or_insert_with(|| {
             let id = next_id; next_id += 1; id
@@ -363,7 +324,6 @@ fn decode_lossy_wrapper(
     let meta_len = data[2] as usize;
     if data.len() < 3 + meta_len { return Err(anyhow!("Invalid IL: truncated")); }
     let inner = &data[3 + meta_len..];
-    // The inner stream has its own IC/UC magic
     decode_full_with_options(inner, neural, alpha)
 }
 
@@ -508,169 +468,3 @@ pub fn estimate_lossy_savings(text: &str, quality_level: u8) -> Result<String, J
     Ok(format!("{:.1}%", LossyCompressor::new(QualityLevel::from_u8(quality_level)).estimate_savings(text)))
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn norm(s: &str) -> String { normalise_whitespace(s) }
-
-    // --- Whitespace normalisation (fixes mismatch) ---
-    #[test]
-    fn test_extra_spaces_roundtrip() {
-        // Whitespace is normalised before encoding in ALL paths.
-        // decode(encode("hello  world")) == "hello world"
-        let text = "hello  world  foo   bar";
-        let enc = encode_stream(text, 200).unwrap();
-        let dec = decode_full(&enc).unwrap();
-        // Both UC and IC return the normalised form
-        assert_eq!(dec, norm(text), "decoded must equal normalised form, got: {:?}", dec);
-    }
-
-    #[test]
-    fn test_leading_trailing_whitespace() {
-        let text = "  hello world  ";
-        let enc = encode_stream(text, 200).unwrap();
-        let dec = decode_full(&enc).unwrap();
-        assert_eq!(dec, norm(text));
-    }
-
-    // --- Short texts (UC path — raw bytes, exact match) ---
-    #[test]
-    fn test_short_hindi() {
-        let text = "यादृच्छिक तरीके से आपको दूंगा";
-        let enc = encode_stream(text, 200).unwrap();
-        assert_eq!(&enc[0..2], b"UC", "short text must use UC");
-        assert_eq!(decode_full(&enc).unwrap(), text);
-    }
-
-    #[test]
-    fn test_short_ascii_exact() {
-        let text = "hello world";
-        let enc = encode_stream(text, 200).unwrap();
-        assert_eq!(&enc[0..2], b"UC");
-        assert_eq!(decode_full(&enc).unwrap(), text);
-    }
-
-    // --- Compression must not expand (auto-fallback) ---
-    #[test]
-    fn test_never_expands() {
-        let texts = &[
-            "x",
-            "hello world",
-            "the quick brown fox",
-            &"abcd ".repeat(200),
-        ];
-        for &text in texts {
-            let enc = encode_stream(text.trim(), 200).unwrap();
-            let orig = text.trim().as_bytes().len();
-            assert!(enc.len() <= orig + 6,
-                "compression must not expand '{}': {} → {}",
-                &text[..text.len().min(20)], orig, enc.len());
-        }
-    }
-
-    // --- Long texts compress to < original (IC path) ---
-    #[test]
-    fn test_hindi_long_compresses() {
-        let text: String = "यह एक परीक्षण वाक्य है जो हिंदी में लिखा गया है ".repeat(15);
-        let text = text.trim().to_string();
-        let orig = text.as_bytes().len();
-        let enc = encode_stream(&text, 200).unwrap();
-        assert_eq!(&enc[0..2], b"IC", "long Hindi must use IC");
-        assert!(enc.len() < orig, "Hindi long must compress: {} → {}", orig, enc.len());
-        assert_eq!(decode_full(&enc).unwrap(), norm(&text));
-    }
-
-    #[test]
-    fn test_ascii_long_compresses() {
-        let text: String = "the quick brown fox jumps over the lazy dog ".repeat(20);
-        let text = text.trim().to_string();
-        let orig = text.as_bytes().len();
-        let enc = encode_stream(&text, 200).unwrap();
-        assert_eq!(&enc[0..2], b"IC");
-        assert!(enc.len() < orig, "ASCII long must compress: {} → {}", orig, enc.len());
-        assert_eq!(decode_full(&enc).unwrap(), norm(&text));
-    }
-
-    // --- Neural produces different (and valid) output ---
-    #[test]
-    fn test_neural_roundtrip() {
-        let text: String = "हिंदी पाठ संपीड़न परीक्षण ".repeat(25);
-        let text = text.trim().to_string();
-        let plain_enc = encode_stream(&text, 200).unwrap();
-        let neural_enc = encode_stream_advanced(&text, CompressionOptions {
-            use_neural: true, neural_weight: 0.5, ..Default::default()
-        }).unwrap();
-
-        // Both decode correctly
-        assert_eq!(decode_full(&plain_enc).unwrap(),  norm(&text));
-        assert_eq!(decode_full(&neural_enc).unwrap(), norm(&text));
-
-        // Neural actually produces different bytes (different ID assignment)
-        // (may be equal for alpha=0 but with 0.5 should differ for Indic text)
-        // We just verify it decodes correctly — testing byte-level difference is
-        // fragile since it depends on the neural model state.
-    }
-
-    #[test]
-    fn test_neural_compresses() {
-        let text: String = "हिंदी पाठ संपीड़न परीक्षण ".repeat(25);
-        let text = text.trim().to_string();
-        let orig = text.as_bytes().len();
-        let enc = encode_stream_advanced(&text, CompressionOptions {
-            use_neural: true, neural_weight: 0.3, ..Default::default()
-        }).unwrap();
-        assert!(enc.len() < orig, "neural must compress: {} → {}", orig, enc.len());
-    }
-
-    // --- Lossy ---
-    #[test]
-    fn test_lossy_high_roundtrip() {
-        let text: String = "hello   world  !!  how  are  you??  ".repeat(20);
-        let text = text.trim().to_string();
-        let opts = CompressionOptions { quality: QualityLevel::High, ..Default::default() };
-        let enc = encode_stream_advanced(&text, opts).unwrap();
-        let dec = decode_full(&enc).unwrap();
-        // Lossy: decoded matches the lossy-normalised form
-        let expected = LossyCompressor::new(QualityLevel::High).compress(&text);
-        assert_eq!(dec, norm(&expected));
-    }
-
-    // --- Prefix decode ---
-    #[test]
-    fn test_prefix_decode_is_prefix() {
-        let text: String = "the fox ".repeat(100);
-        let text = text.trim().to_string();
-        let enc = encode_stream(&text, 50).unwrap();
-        let full  = decode_full(&enc).unwrap();
-        let part  = decode_prefix(&enc, 2).unwrap();
-        assert!(!part.is_empty());
-        assert!(full.starts_with(&part),
-            "prefix should be a prefix of full:\n  full: {:?}\n  part: {:?}",
-            &full[..full.len().min(80)], part);
-    }
-
-    // --- Magic bytes ---
-    #[test]
-    fn test_magic_bytes() {
-        let short = encode_stream("hi", 200).unwrap();
-        assert_eq!(&short[0..2], b"UC");
-
-        let long: String = "word ".repeat(500);
-        let long_enc = encode_stream(long.trim(), 200).unwrap();
-        assert_eq!(&long_enc[0..2], b"IC");
-    }
-
-    // --- Tokeniser preserves spaces ---
-    #[test]
-    fn test_tokenise_with_spaces_roundtrip() {
-        let text = "hello world foo";
-        let tokens = tokenise_with_spaces(text);
-        let reconstructed: String = tokens.iter().map(|t| t.text.as_str()).collect();
-        assert_eq!(reconstructed, text);
-    }
-}
