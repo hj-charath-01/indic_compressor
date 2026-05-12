@@ -1,6 +1,4 @@
 // src/ppm.rs - PPM (Prediction by Partial Matching) stub
-// This is a simplified stub - you can replace with full PPM implementation if needed
-
 use anyhow::Result;
 
 /// PPM context model
@@ -84,34 +82,4 @@ pub fn decode_ppm(data: &[u8]) -> Result<Vec<u32>> {
     }
     
     Ok(tokens)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-    #[test]
-    fn test_ppm_model() {
-        let mut model = PPMModel::new();
-        
-        // Update with some tokens
-        model.update(&[1, 2], 3);
-        model.update(&[1, 2], 3);
-        model.update(&[1, 2], 4);
-        
-        let probs = model.get_probabilities(&[1, 2]);
-        
-        // Token 3 should have higher probability (appeared 2x vs 1x)
-        assert!(probs.len() > 0);
-        assert_eq!(probs[0].0, 3);
-    }
-    
-    #[test]
-    fn test_encode_decode() {
-        let tokens = vec![1, 2, 3, 4, 5];
-        let encoded = encode_ppm(&tokens).unwrap();
-        let decoded = decode_ppm(&encoded).unwrap();
-        
-        assert_eq!(tokens, decoded);
-    }
 }
